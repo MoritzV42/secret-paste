@@ -1,35 +1,61 @@
-﻿# Contributing
+# Contributing
 
-Thanks for considering a contribution! `secret-paste` is small on purpose â€” keep
+Thanks for considering a contribution! `secret-paste` is small on purpose — keep
 PRs focused.
 
 ## Dev install
 
-```powershell
+```bash
 git clone https://github.com/MoritzV42/secret-paste
 cd secret-paste
 python -m venv .venv
+# Windows
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# macOS / Linux
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-Run a script directly during development:
+`pip install -e ".[dev]"` installs the package in editable mode plus the
+test/lint extras (`pytest`, `ruff`, `black`). After install, the four entry
+points (`secret-paste`, `secret-get`, `secret-list`, `secret-revoke`) are on
+your `PATH`.
 
-```powershell
-python .\secret-paste.py TEST_KEY --ttl=1
-python .\secret-get.py TEST_KEY
-python .\secret-list.py
-python .\secret-revoke.py TEST_KEY
+Run a script directly during development without an install:
+
+```bash
+python secret_paste_cli.py TEST_KEY --ttl=1   # persistent store kept 1 hour
+python secret_get_cli.py TEST_KEY              # value drops to a 5-min-TTL temp file
+python secret_list_cli.py
+python secret_revoke_cli.py TEST_KEY
 ```
-
-## Linter
-
-Not yet wired up. Planned: `ruff` + `black`. See ROADMAP.
 
 ## Tests
 
-Not yet wired up. Planned: `pytest` with cross-platform matrix in CI. See
-ROADMAP.
+```bash
+pytest
+```
+
+Tests run on Win/macOS/Linux × Python 3.10–3.12 via the
+`.github/workflows/test.yml` matrix.
+
+## Linter
+
+```bash
+ruff check .
+black --check .
+```
+
+Both run in CI (`.github/workflows/lint.yml`).
+
+## Pre-commit (optional)
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Runs `ruff` and `gitleaks` on every commit.
 
 ## Commit style
 
@@ -41,7 +67,7 @@ subject under ~72 chars. Body in English.
 - One concern per PR. Split unrelated changes.
 - Describe the user-visible behavior change, not just the diff.
 - If you add a new backend, implement the full `VaultBackend` interface in
-  `_common.py` and add it to the README compatibility section.
+  `secret_paste_core.py` and add it to the README compatibility section.
 - Never commit a real secret. Use placeholders like `<paste your token>`.
 
 ## Code of conduct

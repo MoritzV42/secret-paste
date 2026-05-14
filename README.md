@@ -1,43 +1,266 @@
-﻿# secret-paste
+# secret-paste
 
 > Give AI agents secrets without leaking them into your chat transcript.
 
-When you copy-paste a token into Claude / Cursor / ChatGPT, it lives in the conversation forever.
-`secret-paste` opens a local GUI dialog instead â€” you paste the secret there, the agent retrieves
-it via `secret-get` (which never echoes the value to stdout).
+When you paste a token into Claude / Cursor / ChatGPT / your CLI agent, it
+lives in the conversation forever — replayed on every retry, indexed in any
+logs the provider keeps, visible to anyone who later loads the session.
+`secret-paste` fixes this with the smallest possible primitive: a **local GUI
+dialog** the agent asks you to open, plus a **5-minute-TTL temp file** the
+agent reads from. The value never touches the chat.
 
-## Quickstart (Windows)
+```text
++----------------- Agent says -------------------------+
+| "I need your Brevo API key. Run                      |
+|   secret-paste BREVO_KEY                             |
+|  and paste the value into the dialog that pops up."  |
++------------------------------------------------------+
+                         |
+                         v   (you run it locally)
++----------------- secret-paste BREVO_KEY -------------+
+| Enter credential: BREVO_KEY                          |
+| [ ******************************************** ]    |
+| [ ] Show value                                       |
+| Backend: Windows DPAPI                               |
+|                                  [ Cancel ]  [ OK ]  |
++------------------------------------------------------+
+                         |
+                         v   (agent retrieves it)
+  $ secret-get BREVO_KEY
+  OK: BREVO_KEY available at C:\Temp\secret-paste-tmp\BREVO_KEY.val
+      (5min TTL, source=Windows DPAPI)
+```
 
-```powershell
+The agent now has a **file path**, not a value, in its transcript. It reads
+the file, uses the credential, and 5 minutes later the file is auto-deleted.
+
+## Install
+
+### With `pipx` (recommended — all OSes)
+
+```bash
+pipx install secret-paste
+```
+
+You now have `secret-paste`, `secret-get`, `secret-list`, and `secret-revoke`
+on `PATH` on Windows, macOS, and Linux.
+
+### From source
+
+```bash
 git clone https://github.com/MoritzV42/secret-paste
 cd secret-paste
+pip install -e .
+```
+
+### Windows-only PowerShell installer
+
+If you don't want a Python install on `PATH`, the bundled installer (after
+`git clone`) copies the scripts into `%USERPROFILE%\bin\secret-paste\` and
+wires shell functions into your `$PROFILE`:
+
+```powershell
 .\install.ps1
 ```
 
 ## Usage
 
-1. Agent prompts: "I need your Brevo API key. Run `secret-paste BREVO_KEY` and paste it there."
-2. You run it. GUI opens. Paste the value. Click OK.
-3. Agent calls `secret-get BREVO_KEY` â€” receives only a path to a 5-minute-TTL temp file. Value never appears in chat.
+1. **Agent** prompts: _"I need your Brevo API key. Run `secret-paste
+   BREVO_KEY` and paste it into the dialog."_
+2. **You** run it. A GUI dialog opens. Paste the value. Click **OK**.
+3. **Agent** calls `secret-get BREVO_KEY`. Receives a path to a
+   5-minute-TTL temp file. **The value never appears in chat.**
+
+### Two TTLs
+
+There are two independent TTLs and they mean different things:
+
+- **Persistent-store TTL** (`--ttl=24`, hours) — how long the encrypted
+  credential lives on disk / in the keyring before `secret-get` refuses to
+  return it. Default 24 hours. `--persist` disables this.
+- **Temp-file TTL** (always 5 minutes, not configurable) — how long the
+  unencrypted value lives at the path that `secret-get` prints. The file is
+  auto-deleted on the next `secret-paste` call.
+
+### Common flags
+
+```bash
+secret-paste BREVO_KEY --ttl=24            # store kept for 24 hours (default)
+secret-paste BREVO_KEY --persist           # store permanently (no expiry)
+secret-paste BREVO_KEY --desc="Brevo API key (transactional email)"
+
+secret-get BREVO_KEY                        # drops value to a temp file (5-min TTL)
+secret-get BREVO_KEY --export-env          # auto-detects PowerShell or POSIX
+
+secret-list                                 # names + meta, NEVER values
+secret-revoke BREVO_KEY                     # delete locally
+```
+
+### Tell your agent about it
+
+Drop this into your agent's system prompt / `CLAUDE.md` / Cursor rules /
+custom-instructions file:
+
+> When you need a credential that I haven't given you yet, do **not** ask me
+> to paste it into the chat. Instead, ask me to run
+> `secret-paste <KEY_NAME>` in my terminal, wait for me to confirm, then
+> call `secret-get <KEY_NAME>` yourself. That prints a file path to a
+> 5-minute-TTL temp file — read the value from that file (not from this
+> chat) and use it directly. Never echo the value back to me.
+
+The first line of `secret-get`'s stdout has a stable contract:
+
+```
+OK: <name> available at <absolute-path> (5min TTL, source=<backend>)
+```
+
+Agents can parse `<absolute-path>` from this line and read the file.
+
+### Reading from agent code
+
+PowerShell:
+
+```powershell
+. (secret-get BREVO_KEY --export-env | Out-String | Invoke-Expression)
+curl -H "api-key: $env:BREVO_KEY" https://api.brevo.com/v3/account
+```
+
+POSIX shell (bash / zsh):
+
+```bash
+eval "$(secret-get BREVO_KEY --export-env)"
+curl -H "api-key: $BREVO_KEY" https://api.brevo.com/v3/account
+```
+
+Python:
+
+```python
+import subprocess, pathlib, re
+out = subprocess.run(
+    ["secret-get", "BREVO_KEY"], capture_output=True, text=True, check=True
+)
+path = re.search(r"available at (.+?) \(", out.stdout).group(1)
+value = pathlib.Path(path).read_text(encoding="utf-8").strip()
+```
+
+## Why I built this
+
+I work with AI coding agents (Claude Code, Cursor, custom Anthropic-SDK
+agents) on infrastructure where the agent regularly needs short-lived API
+keys it's never seen before — a new Brevo transactional key, a Hetzner API
+token, a one-off `gcloud` access token. Every time the agent asked me to
+paste it into the chat, I had to either:
+
+1. **Paste it** — and then revoke + rotate as soon as the work was done,
+   because the value lived in the transcript and any retry would replay it.
+2. **Manually pre-load it into a long-lived vault** and re-prompt the agent
+   to pull it from there.
+
+Both are friction. The first leaks. The second forces me to treat every
+ad-hoc credential like a long-lived one.
+
+`secret-paste` is the minimum primitive that fixes this: the agent points at
+a key by name, I paste once into a local dialog, the agent reads the value
+out-of-band, and the temp file evaporates in 5 minutes.
 
 ## How it differs from existing tools
 
-| Tool | Solves "AI never sees secret" | Ad-hoc paste (no pre-loaded vault) |
-|---|---|---|
-| 1Password `op run` / Bitwarden `bws run` | Yes | No â€” secret must already be in vault |
-| Anthropic Managed Agents Vaults | Yes | No â€” pre-registered via REST API |
-| Infisical Agent Vault | Yes (HTTPS proxy) | No |
-| **secret-paste** | Yes | Yes â€” you paste a token you just got from Stripe / Brevo / etc. |
+The market for AI-agent credentials is converging on **pre-registered
+vaults**: register every secret ahead of time, then let the agent reference
+it. That works great for stable, long-lived credentials. It does **not**
+work for the freshly-issued one-off token you got from Stripe 30 seconds
+ago. `secret-paste` is the complementary primitive for that case.
 
-## Security
+| Tool | Hides value from AI transcript | Works for an ad-hoc / freshly-issued secret |
+| --- | --- | --- |
+| [1Password `op run`](https://developer.1password.com/docs/cli/secret-references/) | Yes (env-var injection) | No — must exist in a 1Password vault |
+| [Bitwarden `bws run`](https://bitwarden.com/help/secrets-manager-cli/) | Yes (env-var injection) | No — must be created in Bitwarden Secrets Manager |
+| [HashiCorp Vault](https://developer.hashicorp.com/vault/docs/commands/read) (+ agent) | Yes | No — secret must be written first |
+| [Anthropic Managed Agents — Vaults](https://platform.claude.com/docs/en/managed-agents/vaults) | Yes | No — registered via REST API / console |
+| [Infisical Agent Vault](https://github.com/Infisical/agent-vault) | Yes (HTTP proxy) | No — pre-registered in Infisical |
+| [`pass`](https://www.passwordstore.org/) | Partial (terminal, GPG) | No GUI; persists indefinitely once written |
+| **secret-paste** | Yes | **Yes** — local GUI dialog, no vault to pre-load |
 
-- DPAPI-encrypted at rest, user-scoped
-- Temp file with 5-minute TTL, auto-cleanup
-- Value never appears on stdout or in tool-arg strings
-- MIT License â€” audit before use in production
+The win isn't "another secrets manager" — it's the ad-hoc-paste-dialog
+primitive that none of the above ship, plus a 5-minute-TTL handoff that
+keeps the value out of the agent's context window. Pair it with whichever
+vault you already use for long-lived credentials.
 
-## Status
+## Security model
 
-- Windows (DPAPI) â€” supported
-- Linux/Mac (keyring) â€” planned, see ROADMAP
-- Remote backends (Bitwarden, 1Password, SSH-vault) â€” plugin interface in place, no implementation shipped yet
+- **At rest**: DPAPI-encrypted blob (Windows) or OS keyring entry (macOS
+  Keychain, Linux libsecret / kwallet / KeePassXC) — user-scoped, never
+  group-readable.
+- **In transit to the agent**: temp file with 5-minute TTL, auto-cleanup on
+  every `secret-paste` invocation, plus orphan sweep for files whose marker
+  was lost. POSIX mode `0600`; dir is per-UID under `$XDG_RUNTIME_DIR` when
+  available, with mode `0700`.
+- **Never on stdout**: `secret-get` prints the path, not the value. The
+  `--export-env` snippet reads the file inside the shell, not via `argv`.
+- **Never in argv**: there is no `secret-set BREVO_KEY <value>` command —
+  the value enters only via the dialog.
+- **Opportunistic expiry**: when `secret-get` is called on an expired key,
+  the DPAPI blob / keyring entry is purged on the spot so an attacker who
+  later steals the blob cannot decrypt it.
+- **MIT-licensed** — audit before use in production. ~650 lines of Python,
+  ~200 of which is the dialog. No third-party crypto.
+
+### Threats not covered by v0.1
+
+- A compromised local user account can still read the keyring / DPAPI blob.
+  `secret-paste` is not a substitute for full-disk encryption or hardware
+  tokens.
+- A logger that captures every file your shell writes will catch the temp
+  file. If you have one, configure it to exclude
+  `secret-paste-tmp/`.
+- The dialog uses tkinter — if your display server forwards keystrokes to
+  other clients, your paste is exposed. Same caveat as any other GUI
+  password prompt.
+- A shell with tracing enabled (`set -x`, `Set-PSDebug -Trace`) will echo
+  the expansion of the `--export-env` snippet. Run it untraced.
+
+## Platforms
+
+| OS | Backend | Status |
+| --- | --- | --- |
+| Windows 10 / 11 | DPAPI (`pywin32`) | Supported — author's daily driver |
+| macOS 13+ | Keychain (`keyring`) | CI-green on `macos-latest`; Mac testers wanted — open an issue with feedback. |
+| Linux (GNOME / KDE) | libsecret / kwallet / KeePassXC (`keyring`) | CI-tested on `ubuntu-latest`. Needs a Secret Service provider running. |
+
+## Roadmap
+
+- macOS / Linux human-tested confirmation
+- First remote backend (likely `sops` + `age`, file-based and self-hosted)
+- Bitwarden / 1Password remote-mirror backends
+- Animated demo GIF in this README
+
+See [`ROADMAP.md`](ROADMAP.md) for the full list and [`CHANGELOG.md`](CHANGELOG.md)
+for release notes.
+
+## Contributing
+
+PRs welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, test
+matrix, and the `VaultBackend` plugin contract.
+
+## Recording the demo GIF
+
+If you want to send a recording for the README:
+
+```bash
+# macOS / Linux
+asciinema rec demo.cast
+secret-paste DEMO_KEY --ttl=1
+secret-get DEMO_KEY
+exit
+# Convert to GIF with https://github.com/asciinema/agg
+agg demo.cast demo.gif
+
+# Windows: the GUI dialog isn't captured by asciinema.
+# Use ShareX or Peek for the dialog flow.
+```
+
+Open an issue with the file attached.
+
+## License
+
+[MIT](LICENSE) (c) Moritz Voigt
