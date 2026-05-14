@@ -40,10 +40,14 @@ the file, uses the credential, and 5 minutes later the file is auto-deleted.
 
 ```bash
 pipx install secret-paste
+secret-paste-install-skill        # one-time: teach Claude Code to use it
 ```
 
 You now have `secret-paste`, `secret-get`, `secret-list`, and `secret-revoke`
-on `PATH` on Windows, macOS, and Linux.
+on `PATH` on Windows, macOS, and Linux. The second command drops a
+[Claude-Code skill](#claude-code-integration) into `~/.claude/skills/` so
+any Claude session on this machine automatically uses secret-paste instead
+of asking you to paste credentials into chat.
 
 ### From source
 
@@ -96,10 +100,30 @@ secret-list                                 # names + meta, NEVER values
 secret-revoke BREVO_KEY                     # delete locally
 ```
 
-### Tell your agent about it
+## Claude-Code integration
 
-Drop this into your agent's system prompt / `CLAUDE.md` / Cursor rules /
-custom-instructions file:
+If you use [Claude Code](https://claude.com/claude-code), the package ships
+a skill file that makes Claude **auto-use** secret-paste whenever it needs
+a credential — no system-prompt edit required. Install once:
+
+```bash
+secret-paste-install-skill
+```
+
+This copies `secret-paste.md` to `~/.claude/skills/`. Open a new Claude-Code
+session and every future credential request will be routed through the
+dialog automatically. To remove:
+
+```bash
+secret-paste-install-skill --uninstall
+```
+
+The Windows PowerShell installer (`install.ps1`) does this step for you.
+
+### Tell other agents about it (Cursor / custom Anthropic-SDK / etc.)
+
+For agents without a skill loader, drop this into your agent's system prompt /
+`CLAUDE.md` / Cursor rules / custom-instructions file:
 
 > When you need a credential that I haven't given you yet, do **not** ask me
 > to paste it into the chat. Instead, ask me to run

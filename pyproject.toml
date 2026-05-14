@@ -64,6 +64,7 @@ secret-paste = "secret_paste_cli:main"
 secret-get = "secret_get_cli:main"
 secret-list = "secret_list_cli:main"
 secret-revoke = "secret_revoke_cli:main"
+secret-paste-install-skill = "secret_paste_install_skill:main"
 
 [tool.setuptools]
 py-modules = [
@@ -72,7 +73,12 @@ py-modules = [
     "secret_get_cli",
     "secret_list_cli",
     "secret_revoke_cli",
+    "secret_paste_install_skill",
 ]
+packages = ["secret_paste_skill"]
+
+[tool.setuptools.package-data]
+secret_paste_skill = ["*.md"]
 
 [tool.ruff]
 line-length = 100

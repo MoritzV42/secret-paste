@@ -9,6 +9,7 @@
 
 param(
     [switch]$SkipSmokeTest = $false,
+    [switch]$SkipClaudeSkill = $false,
     [switch]$Force = $false
 )
 
@@ -119,9 +120,28 @@ if ($currentContent -match [regex]::Escape($marker)) {
     Write-Host "  secret-paste block appended to profile: $profilePath"
 }
 
-# --- 5) Smoke test -------------------------------------------------------
+# --- 5) Install Claude skill --------------------------------------------
+if (-not $SkipClaudeSkill) {
+    Write-Host "`n[5/6] Installing Claude-Code skill..." -ForegroundColor Yellow
+    $skillSrc = Join-Path $srcDir 'secret_paste_skill\secret-paste.md'
+    $skillDir = Join-Path $env:USERPROFILE '.claude\skills'
+    if (Test-Path $skillSrc) {
+        if (-not (Test-Path $skillDir)) {
+            New-Item -ItemType Directory -Force -Path $skillDir | Out-Null
+        }
+        Copy-Item -Path $skillSrc -Destination $skillDir -Force
+        Write-Host "  Skill -> $skillDir\secret-paste.md" -ForegroundColor Green
+        Write-Host "  Open a new Claude-Code session so the skill is picked up." -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Skill source missing ($skillSrc), skipped." -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "`n[5/6] Claude skill install skipped (-SkipClaudeSkill)." -ForegroundColor DarkGray
+}
+
+# --- 6) Smoke test -------------------------------------------------------
 if (-not $SkipSmokeTest) {
-    Write-Host "`n[5/5] Smoke test (secret-paste TEST_KEY --ttl=1)..." -ForegroundColor Yellow
+    Write-Host "`n[6/6] Smoke test (secret-paste TEST_KEY --ttl=1)..." -ForegroundColor Yellow
     Write-Host "  A GUI dialog will appear. Type a test value + OK." -ForegroundColor Cyan
     Write-Host "  (Or Cancel to skip.)" -ForegroundColor Cyan
     & python (Join-Path $dstDir 'secret_paste_cli.py') 'TEST_KEY' '--ttl=1'
@@ -132,9 +152,10 @@ if (-not $SkipSmokeTest) {
         Write-Host "  Smoke test: cancelled (no error)." -ForegroundColor DarkYellow
     }
 } else {
-    Write-Host "`n[5/5] Smoke test skipped." -ForegroundColor DarkGray
+    Write-Host "`n[6/6] Smoke test skipped." -ForegroundColor DarkGray
 }
 
 Write-Host "`n=== Installation complete ===" -ForegroundColor Green
 Write-Host "Open a new PowerShell window (or run '. `$PROFILE'),"
 Write-Host "then 'secret-paste', 'secret-get', 'secret-list', 'secret-revoke' are available."
+Write-Host "Claude-Code will now auto-use secret-paste when it needs a credential."

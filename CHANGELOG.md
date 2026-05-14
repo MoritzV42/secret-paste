@@ -27,6 +27,12 @@ First public release.
   - Linux: libsecret / kwallet via `keyring`.
 - `VaultBackend` plugin interface in `secret_paste_core.py` for future
   remote backends (Bitwarden, 1Password, sops/age).
+- `secret-paste-install-skill` entry point that copies a Claude-Code skill
+  (`secret-paste.md`) into `~/.claude/skills/`. Once installed, any
+  Claude-Code session on the machine auto-uses secret-paste when it needs
+  a credential, instead of asking the user to paste into chat.
+- `install.ps1` runs the skill install step automatically (skip with
+  `-SkipClaudeSkill`).
 - pytest suite (42 tests) covering name sanitisation, TTL math, temp-file
   cleanup, DPAPI roundtrip (mocked), and the `VaultBackend` contract.
 - GitHub Actions matrix CI: Windows / macOS / Linux × Python 3.10–3.12.
