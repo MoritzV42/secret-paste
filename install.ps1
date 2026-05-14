@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 # --- 0) Platform check ---------------------------------------------------
 if (-not $IsWindows -and -not ($env:OS -eq 'Windows_NT')) {
     Write-Host "ERROR: secret-paste is currently Windows-only." -ForegroundColor Red
-    Write-Host "Linux/Mac via keyring planned â€” see ROADMAP.md and POLISH_PROMPT.md." -ForegroundColor Red
+    Write-Host "Linux/Mac via keyring planned — see ROADMAP.md and POLISH_PROMPT.md." -ForegroundColor Red
     exit 1
 }
 
@@ -100,10 +100,10 @@ $marker = '# >>> secret-paste >>>'
 $endMarker = '# <<< secret-paste <<<'
 $block = @"
 $marker
-function secret-paste  { python "`$env:USERPROFILE\bin\secret-paste\secret-paste.py"  @args }
-function secret-get    { python "`$env:USERPROFILE\bin\secret-paste\secret-get.py"    @args }
-function secret-list   { python "`$env:USERPROFILE\bin\secret-paste\secret-list.py"   @args }
-function secret-revoke { python "`$env:USERPROFILE\bin\secret-paste\secret-revoke.py" @args }
+function secret-paste  { python "`$env:USERPROFILE\bin\secret-paste\secret_paste_cli.py"  @args }
+function secret-get    { python "`$env:USERPROFILE\bin\secret-paste\secret_get_cli.py"    @args }
+function secret-list   { python "`$env:USERPROFILE\bin\secret-paste\secret_list_cli.py"   @args }
+function secret-revoke { python "`$env:USERPROFILE\bin\secret-paste\secret_revoke_cli.py" @args }
 $endMarker
 "@
 
@@ -124,10 +124,10 @@ if (-not $SkipSmokeTest) {
     Write-Host "`n[5/5] Smoke test (secret-paste TEST_KEY --ttl=1)..." -ForegroundColor Yellow
     Write-Host "  A GUI dialog will appear. Type a test value + OK." -ForegroundColor Cyan
     Write-Host "  (Or Cancel to skip.)" -ForegroundColor Cyan
-    & python (Join-Path $dstDir 'secret-paste.py') 'TEST_KEY' '--ttl=1'
+    & python (Join-Path $dstDir 'secret_paste_cli.py') 'TEST_KEY' '--ttl=1'
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Smoke test: OK" -ForegroundColor Green
-        Write-Host "  Run 'python $dstDir\secret-list.py' to see TEST_KEY (without value)." -ForegroundColor DarkGray
+        Write-Host "  Run 'python $dstDir\secret_list_cli.py' to see TEST_KEY (without value)." -ForegroundColor DarkGray
     } else {
         Write-Host "  Smoke test: cancelled (no error)." -ForegroundColor DarkYellow
     }

@@ -3,13 +3,14 @@
 Usage:
   secret-list
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
 from datetime import datetime
 
-import _common as cc
+import secret_paste_core as cc
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -17,9 +18,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog="secret-list",
         description="List all locally stored credentials (names + meta, no values).",
     )
-    p.add_argument("--vault", action="store_true",
-                   help="(Reserved) Also list remote-backend entries. "
-                        "No remote backend is configured in this release.")
+    p.add_argument(
+        "--vault",
+        action="store_true",
+        help="(Reserved) Also list remote-backend entries. "
+        "No remote backend is configured in this release.",
+    )
     return p.parse_args(argv)
 
 
@@ -42,13 +46,15 @@ def main(argv: list[str] | None = None) -> int:
             exp_str = "EXPIRED"
         else:
             exp_str = cc.fmt_local(exp)
-        rows.append((
-            m["name"],
-            "local",
-            cc.fmt_local(created),
-            exp_str,
-            "Yes" if m.get("persist_to_vault") else "No",
-        ))
+        rows.append(
+            (
+                m["name"],
+                m.get("backend", "local"),
+                cc.fmt_local(created),
+                exp_str,
+                "Yes" if m.get("persist_to_vault") else "No",
+            )
+        )
 
     # Adjust column widths
     all_rows = [header] + rows

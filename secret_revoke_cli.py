@@ -3,12 +3,13 @@
 Usage:
   secret-revoke <KEY_NAME>
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
 
-import _common as cc
+import secret_paste_core as cc
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -17,12 +18,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Delete a credential from the local store.",
     )
     p.add_argument("name", help="Key name")
-    p.add_argument("--keep-vault", action="store_true",
-                   help="(Reserved) Do not delete remote-backend entry. "
-                        "No remote backend is configured in this release.")
-    p.add_argument("--vault-only", action="store_true",
-                   help="(Reserved) Only delete remote-backend entry. "
-                        "No remote backend is configured in this release.")
+    p.add_argument(
+        "--keep-vault",
+        action="store_true",
+        help="(Reserved) Do not delete remote-backend entry. "
+        "No remote backend is configured in this release.",
+    )
+    p.add_argument(
+        "--vault-only",
+        action="store_true",
+        help="(Reserved) Only delete remote-backend entry. "
+        "No remote backend is configured in this release.",
+    )
     return p.parse_args(argv)
 
 
@@ -45,8 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     local_deleted = cc.delete_local(args.name)
 
     if not local_deleted:
-        print(f"Nothing deleted (key '{args.name}' not found).",
-              file=sys.stderr)
+        print(f"Nothing deleted (key '{args.name}' not found).", file=sys.stderr)
         return 1
 
     print(f"OK: {args.name} deleted (local).")

@@ -1,1 +1,3 @@
+# Runtime dependencies. See pyproject.toml for canonical metadata.
 pywin32; sys_platform == 'win32'
+keyring>=24; sys_platform != 'win32'
