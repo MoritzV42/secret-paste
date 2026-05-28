@@ -365,6 +365,25 @@ def write_tmp_value(name: str, value: str) -> Path:
     return p
 
 
+def tmp_ttl_remaining(name: str) -> int | None:
+    """Verbleibende Lebensdauer der Temp-Datei in ganzen Sekunden.
+
+    Liest den Ablauf-Marker (``<name>.val.expires``) und gibt die Differenz zu
+    ``jetzt`` zurück. Nie negativ — eine bereits abgelaufene (aber noch nicht
+    aufgeräumte) Datei liefert ``0``. Gibt ``None`` zurück, wenn kein Marker
+    existiert oder dessen Inhalt nicht als Zeitstempel lesbar ist.
+    """
+    marker = tmp_val_path(name).with_suffix(".val.expires")
+    if not marker.exists():
+        return None
+    try:
+        exp = datetime.fromisoformat(marker.read_text(encoding="utf-8").strip())
+    except Exception:  # noqa: BLE001
+        return None
+    remaining = (exp - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(remaining))
+
+
 def cleanup_tmp() -> None:
     """Remove expired ``.val`` files plus orphan ``.val`` files without a marker."""
     now = datetime.now(timezone.utc)

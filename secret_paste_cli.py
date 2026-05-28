@@ -85,10 +85,27 @@ def _apply_theme(root) -> None:
                 break
             except Exception:  # noqa: BLE001
                 continue
-    style.configure("Header.TLabel", font=_font("bold", 13))
+    style.configure("Header.TLabel", font=_font("bold", 15))
     style.configure("Hint.TLabel", foreground="#666", font=_font("normal", 9))
     style.configure("Muted.TLabel", foreground="#999", font=_font("normal", 8))
     style.configure("Backend.TLabel", foreground="#3a7bd5", font=_font("normal", 9))
+    # Akzent-Button für die primäre Aktion (OK). Reines ttk, keine Extra-Deps —
+    # nicht jedes Theme ehrt jede Option, deshalb defensiv konfiguriert.
+    try:
+        style.configure(
+            "Accent.TButton",
+            font=_font("bold", 10),
+            foreground="#ffffff",
+            background="#3a7bd5",
+            padding=(14, 6),
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", "#2f66b3"), ("disabled", "#9bb8e0")],
+            foreground=[("disabled", "#eeeeee")],
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def show_dialog(
@@ -132,9 +149,27 @@ def show_dialog(
     persist_var = tk.BooleanVar(value=default_persist)
     vault_var = tk.BooleanVar(value=False)
 
-    entry = ttk.Entry(outer, textvariable=value_var, show="*", width=60)
-    entry.pack(fill="x", pady=(4, 4))
+    # Eingabezeile: Feld + "Paste"-Button nebeneinander. Der Button holt den
+    # Wert aus der Zwischenablage ins Feld — bequem, der Wert landet nie im Chat.
+    entry_row = ttk.Frame(outer)
+    entry_row.pack(fill="x", pady=(4, 4))
+    entry = ttk.Entry(entry_row, textvariable=value_var, show="*")
+    entry.pack(side="left", fill="x", expand=True)
     entry.focus_set()
+
+    def paste_clipboard():
+        try:
+            clip = root.clipboard_get()
+        except Exception:  # noqa: BLE001  — leere/nicht-text Zwischenablage
+            clip = ""
+        if clip:
+            value_var.set(clip.strip("\r\n"))
+            entry.icursor("end")
+        entry.focus_set()
+
+    ttk.Button(entry_row, text="Paste", width=8, command=paste_clipboard).pack(
+        side="left", padx=(8, 0)
+    )
 
     err_lbl = ttk.Label(outer, text="", foreground="#d23", style="Hint.TLabel")
     err_lbl.pack(anchor="w")
@@ -197,7 +232,13 @@ def show_dialog(
     btn_frame = ttk.Frame(outer)
     btn_frame.pack(fill="x", pady=(14, 0))
     ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
-    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=(0, 8))
+    ok_btn = ttk.Button(btn_frame, text="Speichern", command=on_ok)
+    # Akzent-Stil nur anwenden, wenn das Theme ihn unterstützt — sonst Default.
+    try:
+        ok_btn.configure(style="Accent.TButton")
+    except Exception:  # noqa: BLE001
+        pass
+    ok_btn.pack(side="right", padx=(0, 8))
 
     root.bind("<Return>", on_ok)
     root.bind("<Escape>", on_cancel)

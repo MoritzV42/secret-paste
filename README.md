@@ -95,6 +95,8 @@ secret-paste BREVO_KEY --desc="Brevo API key (transactional email)"
 
 secret-get BREVO_KEY                        # drops value to a temp file (5-min TTL)
 secret-get BREVO_KEY --export-env          # auto-detects PowerShell or POSIX
+secret-get BREVO_KEY --print-path          # prints ONLY the temp-file path
+secret-get BREVO_KEY --json                # {"name","path","ttl_remaining"} (no value)
 
 secret-list                                 # names + meta, NEVER values
 secret-revoke BREVO_KEY                     # delete locally
@@ -156,16 +158,31 @@ eval "$(secret-get BREVO_KEY --export-env)"
 curl -H "api-key: $BREVO_KEY" https://api.brevo.com/v3/account
 ```
 
-Python:
+Python (robust — no regex parsing of the human-readable line):
 
 ```python
-import subprocess, pathlib, re
-out = subprocess.run(
-    ["secret-get", "BREVO_KEY"], capture_output=True, text=True, check=True
-)
-path = re.search(r"available at (.+?) \(", out.stdout).group(1)
+import subprocess, pathlib
+path = subprocess.run(
+    ["secret-get", "BREVO_KEY", "--print-path"],
+    capture_output=True, text=True, check=True,
+).stdout.strip()
 value = pathlib.Path(path).read_text(encoding="utf-8").strip()
 ```
+
+Or if you also want the remaining TTL, use `--json`:
+
+```python
+import subprocess, json, pathlib
+info = json.loads(subprocess.run(
+    ["secret-get", "BREVO_KEY", "--json"],
+    capture_output=True, text=True, check=True,
+).stdout)
+# info == {"name": "BREVO_KEY", "path": "/.../BREVO_KEY.val", "ttl_remaining": 299}
+value = pathlib.Path(info["path"]).read_text(encoding="utf-8").strip()
+```
+
+> `--json` / `--print-path` never put the value on stdout — only the path to the
+> 5-minute-TTL temp file. The value still lives only in that file.
 
 ## Why I built this
 

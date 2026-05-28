@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `secret-get --print-path` — prints only the absolute temp-file path (no
+  human-readable `OK:` line), so callers can read the file without parsing
+  stdout with a regex.
+- `secret-get --json` — prints a machine-readable
+  `{"name", "path", "ttl_remaining"}` object. `ttl_remaining` is the temp
+  file's remaining lifetime in seconds. The credential value is never part of
+  the JSON — only the path to the 5-minute-TTL temp file.
+- `secret_paste_core.tmp_ttl_remaining(name)` helper backing `--json`.
+
+### Changed
+
+- Paste dialog polish (pure stdlib, no new dependencies): a "Paste" button
+  next to the input field (pulls the value from the clipboard), an accent-styled
+  primary button, and a larger header for clearer visual hierarchy.
+
 ## [0.1.0] — 2026-05-14
 
 First public release.

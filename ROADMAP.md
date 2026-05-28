@@ -17,7 +17,8 @@ Tracked work toward a stable v1.0 release.
 - First remote backend (likely **sops + age**, file-based and self-hosted)
 - Animated demo GIF in README
 - macOS / Linux human-tested confirmation (looking for testers)
-- `--json` / `--print-path` machine-readable output for `secret-get`
+- ✅ `--json` / `--print-path` machine-readable output for `secret-get`
+  (shipped — value never on stdout, only the temp-file path)
 - Optional system-tray icon as an alternative to the modal dialog
 
 ## v0.3+ candidates
