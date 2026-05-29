@@ -68,6 +68,111 @@ def test_default_backend_raises_when_none_available(monkeypatch):
         core.default_backend()
 
 
+class _WriteOnlyStub(core.VaultBackend):
+    """Minimal write-only backend used to exercise the read-capability guard."""
+
+    name = "write-only-stub"
+    supports_read = False
+
+    def __init__(self):
+        self._store: dict[str, str] = {}
+
+    def put(self, name, value, ttl_hours=None, persist_to_vault=False):
+        self._store[name] = value
+
+    def get(self, name):  # would leak if ever reached — guard must prevent it
+        raise AssertionError("get() must never be called on a write-only backend")
+
+    def delete(self, name):
+        return self._store.pop(name, None) is not None
+
+    def list(self):
+        return [core.CredMeta(name=n, source=self.name) for n in self._store]
+
+
+def test_default_backend_supports_read():
+    # Both shipped local backends are readable by default.
+    assert core.LocalDPAPIBackend().supports_read is True
+    assert core.KeyringBackend().supports_read is True
+
+
+def test_backend_get_helper_reads_readable_backend(patched_backend):
+    patched_backend.put("EPS", "v", ttl_hours=None, persist_to_vault=False)
+    assert core.backend_get(patched_backend, "EPS") == "v"
+
+
+def test_backend_get_helper_refuses_write_only_backend():
+    wo = _WriteOnlyStub()
+    wo.put("ZETA", "secret-value")
+    with pytest.raises(core.WriteOnlyError):
+        core.backend_get(wo, "ZETA")
+
+
+def test_sops_age_is_write_only():
+    assert core.SopsAgeBackend().supports_read is False
+
+
+def test_sops_age_get_raises_not_implemented():
+    with pytest.raises(NotImplementedError):
+        core.SopsAgeBackend(recipient="age1xxx").get("ANY")
+
+
+def test_sops_age_put_without_recipient_raises(isolated_dirs):
+    with pytest.raises(RuntimeError, match="recipient"):
+        core.SopsAgeBackend().put("ANY", "v")
+
+
+def test_sops_age_put_without_age_binary_raises(isolated_dirs, monkeypatch):
+    monkeypatch.setattr(core.shutil, "which", lambda _name: None)
+    with pytest.raises(RuntimeError, match="age"):
+        core.SopsAgeBackend(recipient="age1xxx").put("ANY", "v")
+
+
+def test_sops_age_put_writes_entry(isolated_dirs, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(core.shutil, "which", lambda _name: "/usr/bin/age")
+
+    def fake_run(cmd, **kwargs):
+        # cmd = [age, --encrypt, --recipient, R, --output, PATH]
+        out_path = cmd[cmd.index("--output") + 1]
+        # Simulate age writing an (opaque) ciphertext file.
+        with open(out_path, "wb") as fh:
+            fh.write(b"age-encrypted-blob")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    be = core.SopsAgeBackend(recipient="age1xxx")
+    be.put("REMOTE_KEY", "plaintext")
+    entries = {cm.name for cm in be.list()}
+    assert "REMOTE_KEY" in entries
+    # The value is encrypted, not stored in cleartext.
+    blob = (core.remote_dir() / "REMOTE_KEY.age").read_bytes()
+    assert b"plaintext" not in blob
+
+
+def test_configured_remote_backend_none_when_unset():
+    assert core.configured_remote_backend({"remote_backend": None}) is None
+
+
+def test_configured_remote_backend_from_dict():
+    be = core.configured_remote_backend(
+        {"remote_backend": {"type": "sops-age", "recipient": "age1xxx"}}
+    )
+    assert isinstance(be, core.SopsAgeBackend)
+    assert be.recipient == "age1xxx"
+
+
+def test_configured_remote_backend_from_string():
+    be = core.configured_remote_backend({"remote_backend": "sops-age"})
+    assert isinstance(be, core.SopsAgeBackend)
+
+
+def test_configured_remote_backend_unknown_type_raises():
+    with pytest.raises(ValueError, match="Unknown remote backend"):
+        core.configured_remote_backend({"remote_backend": {"type": "nope"}})
+
+
 def test_backend_label_reports_active_platform(monkeypatch):
     import sys
 

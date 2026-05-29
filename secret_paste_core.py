@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 from abc import ABC, abstractmethod
@@ -132,6 +133,90 @@ def _safe_name(name: str) -> str:
     return cleaned
 
 
+# --- Config layer --------------------------------------------------------
+
+# Default config: remote mirroring is OFF until the user opts in. A None
+# backend means "no remote backend configured yet" even when remote_enabled.
+CONFIG_DEFAULTS: dict = {
+    "remote_enabled": False,
+    "remote_backend": None,
+}
+
+
+def config_path() -> Path:
+    return store_dir() / "config.json"
+
+
+def load_config() -> dict:
+    """Load config, merged over defaults. Robust against a missing/corrupt file.
+
+    A missing or unparseable ``config.json`` yields a copy of CONFIG_DEFAULTS
+    instead of raising — the tool must keep working with safe defaults even if
+    the file was hand-edited into invalid JSON.
+    """
+    cfg = dict(CONFIG_DEFAULTS)
+    cp = config_path()
+    if not cp.exists():
+        return cfg
+    try:
+        data = json.loads(cp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — corrupt JSON, unreadable file, etc.
+        return cfg
+    if isinstance(data, dict):
+        cfg.update({k: data[k] for k in CONFIG_DEFAULTS if k in data})
+    return cfg
+
+
+def save_config(cfg: dict) -> None:
+    """Persist config. Only known keys are written; unknown keys are dropped."""
+    out = {k: cfg.get(k, CONFIG_DEFAULTS[k]) for k in CONFIG_DEFAULTS}
+    config_path().write_text(json.dumps(out, indent=2), encoding="utf-8")
+
+
+def set_remote_enabled(enabled: bool) -> dict:
+    """Toggle the ``remote_enabled`` flag and persist. Returns the new config."""
+    cfg = load_config()
+    cfg["remote_enabled"] = bool(enabled)
+    save_config(cfg)
+    return cfg
+
+
+def set_remote_backend(backend_type: str | None, **options) -> dict:
+    """Set the remote backend spec in config and persist. Returns the new config.
+
+    ``backend_type=None`` clears the remote backend. Otherwise the config stores
+    a ``{"type": backend_type, **options}`` dict (options with empty values are
+    dropped). The spec is validated via ``configured_remote_backend`` first, so
+    an unknown type raises ``ValueError`` before anything is written.
+    """
+    cfg = load_config()
+    if backend_type is None:
+        cfg["remote_backend"] = None
+    else:
+        spec = {"type": backend_type}
+        spec.update({k: v for k, v in options.items() if v})
+        configured_remote_backend({"remote_backend": spec})  # validate (may raise)
+        cfg["remote_backend"] = spec
+    save_config(cfg)
+    return cfg
+
+
+# --- Vault detection -----------------------------------------------------
+
+# CLI tools we know how to talk to (or plan to). Detection is purely "is the
+# binary on PATH" — it does not run the tools or read any vault state.
+KNOWN_VAULT_CLIS: tuple[str, ...] = ("age", "sops", "bw", "op")
+
+
+def detect_vaults() -> list[str]:
+    """Return the subset of KNOWN_VAULT_CLIS that are available on PATH.
+
+    Pure stdlib (``shutil.which``); never runs the binaries. Used to decide
+    whether to offer the remote-mirror option to the user at all.
+    """
+    return [name for name in KNOWN_VAULT_CLIS if shutil.which(name)]
+
+
 # --- Platform-specific value storage --------------------------------------
 
 
@@ -228,7 +313,14 @@ def write_credential(
     ttl_hours: int | None,
     persist_to_vault: bool,
 ) -> str:
-    """Store ``value`` and write metadata. Returns backend tag."""
+    """Store ``value`` and write metadata. Returns backend tag.
+
+    If ``persist_to_vault`` is set AND remote mirroring is enabled in config
+    AND a remote backend is configured, the value is additionally pushed to the
+    remote backend. A remote failure NEVER corrupts the local store: the local
+    write completes first, and any remote error is caught and surfaced only as a
+    warning. The returned tag always reflects the local backend.
+    """
     backend = _store_value(name, value)
     now = datetime.now(timezone.utc)
     meta = {
@@ -239,7 +331,42 @@ def write_credential(
         "backend": backend,
     }
     meta_path(name).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    if persist_to_vault:
+        _mirror_to_remote(name, value, ttl_hours, persist_to_vault)
+
     return backend
+
+
+def _mirror_to_remote(
+    name: str,
+    value: str,
+    ttl_hours: int | None,
+    persist_to_vault: bool,
+) -> bool:
+    """Best-effort push to the configured remote backend. Never raises.
+
+    Returns True if the value was mirrored, False if mirroring was skipped
+    (disabled / not configured) or failed. Any exception from the remote
+    backend is swallowed and printed as a warning so the local store stays
+    intact.
+    """
+    cfg = load_config()
+    if not cfg.get("remote_enabled"):
+        return False
+    try:
+        remote = configured_remote_backend(cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: remote mirror skipped (backend config error): {exc}", file=sys.stderr)
+        return False
+    if remote is None:
+        return False
+    try:
+        remote.put(name, value, ttl_hours=ttl_hours, persist_to_vault=persist_to_vault)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: remote mirror failed for {name!r}: {exc}", file=sys.stderr)
+        return False
 
 
 def read_meta(name: str) -> dict | None:
@@ -365,6 +492,25 @@ def write_tmp_value(name: str, value: str) -> Path:
     return p
 
 
+def tmp_ttl_remaining(name: str) -> int | None:
+    """Remaining lifetime of the temp file in whole seconds.
+
+    Reads the expiry marker (``<name>.val.expires``) and returns the difference
+    to ``now``. Never negative — an already-expired (but not yet cleaned up)
+    file returns ``0``. Returns ``None`` when no marker exists or its content
+    is not a readable timestamp.
+    """
+    marker = tmp_val_path(name).with_suffix(".val.expires")
+    if not marker.exists():
+        return None
+    try:
+        exp = datetime.fromisoformat(marker.read_text(encoding="utf-8").strip())
+    except Exception:  # noqa: BLE001
+        return None
+    remaining = (exp - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(remaining))
+
+
 def cleanup_tmp() -> None:
     """Remove expired ``.val`` files plus orphan ``.val`` files without a marker."""
     now = datetime.now(timezone.utc)
@@ -435,9 +581,16 @@ class VaultBackend(ABC):
 
     Implementations must NEVER print or log credential values. ``get`` is the
     only method allowed to return the plaintext value, and only to the caller.
+
+    Capability flag ``supports_read`` advertises whether this backend can serve
+    reads. A write-only backend (e.g. a remote mirror you push to but never read
+    back from) sets ``supports_read = False``; callers must route reads to a
+    readable backend instead and never call ``get`` on it. Use the module-level
+    ``backend_get`` helper, which enforces this.
     """
 
     name: str = "abstract"
+    supports_read: bool = True
 
     @abstractmethod
     def put(
@@ -460,6 +613,24 @@ class VaultBackend(ABC):
     @abstractmethod
     def list(self) -> list[CredMeta]:
         """Return metadata for all entries. Never returns values."""
+
+
+class WriteOnlyError(RuntimeError):
+    """Raised when a write-only backend is asked to read a credential."""
+
+
+def backend_get(backend: VaultBackend, name: str) -> str | None:
+    """Read a credential through a backend, enforcing the read capability.
+
+    Raises ``WriteOnlyError`` if the backend declares ``supports_read = False``
+    instead of calling its ``get``. This is the single choke point so that no
+    code path can accidentally read from a write-only mirror.
+    """
+    if not getattr(backend, "supports_read", True):
+        raise WriteOnlyError(
+            f"Backend {backend.name!r} is write-only and cannot be read from."
+        )
+    return backend.get(name)
 
 
 class LocalDPAPIBackend(VaultBackend):
@@ -541,8 +712,136 @@ def default_backend() -> VaultBackend:
     )
 
 
+# --- Remote backends -----------------------------------------------------
+
+
+def remote_dir() -> Path:
+    """Directory holding age-encrypted remote-mirror entries."""
+    p = store_dir() / "remote"
+    p.mkdir(parents=True, exist_ok=True)
+    if os.name == "posix":
+        try:
+            os.chmod(p, 0o700)
+        except OSError:
+            pass
+    return p
+
+
+class SopsAgeBackend(VaultBackend):
+    """Write-only, file-based remote mirror using the ``age`` CLI (skeleton).
+
+    Each ``put`` writes one age-encrypted file under ``store_dir()/remote/``.
+    This is intentionally a skeleton: it implements ``put`` (real age
+    encryption) and declares itself write-only — ``get`` is not supported, so
+    the credential is mirrored out but never read back through this backend.
+    A full sops-managed, syncable remote is future work (see ROADMAP.md).
+
+    The backend needs an age recipient (public key, ``age1...``) to encrypt to.
+    If ``age`` is not on PATH, or no recipient is configured, ``put`` raises a
+    clear error rather than crashing or silently dropping the value.
+    """
+
+    name = "sops-age"
+    supports_read = False
+
+    def __init__(self, recipient: str | None = None):
+        self.recipient = recipient
+
+    def _entry_path(self, name: str) -> Path:
+        return remote_dir() / f"{_safe_name(name)}.age"
+
+    def put(
+        self,
+        name: str,
+        value: str,
+        ttl_hours: int | None = None,
+        persist_to_vault: bool = False,
+    ) -> None:
+        import subprocess
+
+        if not self.recipient:
+            raise RuntimeError(
+                "sops-age backend has no recipient configured. Set an age "
+                "recipient (public key 'age1...') before mirroring."
+            )
+        age_bin = shutil.which("age")
+        if age_bin is None:
+            raise RuntimeError(
+                "The 'age' CLI was not found on PATH. Install age "
+                "(https://github.com/FiloSottile/age) to use the sops-age backend."
+            )
+        out_path = self._entry_path(name)
+        try:
+            # Encrypt stdin -> file. The plaintext is passed via stdin, never
+            # as an argument, so it does not appear in the process table.
+            subprocess.run(
+                [age_bin, "--encrypt", "--recipient", self.recipient, "--output", str(out_path)],
+                input=value.encode("utf-8"),
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(f"age encryption failed: {stderr or exc}") from exc
+        if os.name == "posix":
+            try:
+                os.chmod(out_path, 0o600)
+            except OSError:
+                pass
+
+    def get(self, name: str) -> str | None:
+        raise NotImplementedError(
+            "sops-age is a write-only backend; reads must come from the local store."
+        )
+
+    def delete(self, name: str) -> bool:
+        p = self._entry_path(name)
+        if p.exists():
+            try:
+                p.unlink()
+                return True
+            except OSError:
+                return False
+        return False
+
+    def list(self) -> list[CredMeta]:
+        items: list[CredMeta] = []
+        for f in sorted(remote_dir().glob("*.age")):
+            items.append(CredMeta(name=f.stem, source=self.name))
+        return items
+
+
+def configured_remote_backend(cfg: dict | None = None) -> VaultBackend | None:
+    """Build the remote backend described by config, or None if not configured.
+
+    The ``remote_backend`` config value may be:
+      * ``None`` — no remote backend (returns None),
+      * a string — the backend type name (e.g. ``"sops-age"``),
+      * a dict — ``{"type": ..., <backend-specific options>}`` (e.g. an age
+        ``recipient`` for ``sops-age``).
+
+    Raises ``ValueError`` for an unknown backend type so misconfiguration is
+    visible rather than silently dropping writes.
+    """
+    if cfg is None:
+        cfg = load_config()
+    spec = cfg.get("remote_backend")
+    if not spec:
+        return None
+    if isinstance(spec, str):
+        btype, opts = spec, {}
+    elif isinstance(spec, dict):
+        btype = spec.get("type")
+        opts = {k: v for k, v in spec.items() if k != "type"}
+    else:
+        raise ValueError(f"Invalid remote_backend config: {spec!r}")
+
+    if btype == "sops-age":
+        return SopsAgeBackend(recipient=opts.get("recipient"))
+    raise ValueError(f"Unknown remote backend type: {btype!r}")
+
+
 # Stubs for future remote/portable backends — see ROADMAP.md:
 #
 # class BitwardenBackend(VaultBackend):   # bw CLI
 # class OnePasswordBackend(VaultBackend): # op CLI
-# class SopsAgeBackend(VaultBackend):     # sops + age, file-based

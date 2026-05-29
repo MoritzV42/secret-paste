@@ -2,6 +2,7 @@
 
 Usage:
   secret-get <KEY_NAME> [--export-env] [--shell=auto|ps|posix]
+  secret-get <KEY_NAME> [--json | --print-path]
 
 Default:
   Writes value to ``<tempdir>/secret-paste-tmp/<name>.val`` (5-minute TTL).
@@ -12,6 +13,20 @@ Default:
   (PowerShell) or ``<NAME>`` (POSIX) from the temp file. The value is NEVER
   echoed to the terminal — it is read from the temp file inside the snippet.
 
+--print-path:
+  Print ONLY the absolute temp-file path and nothing else. Lets a caller do
+  ``read_text(secret-get KEY --print-path)`` without parsing the human-readable
+  ``OK:`` line with a regex.
+
+--json:
+  Print a machine-readable JSON object ``{"name", "path", "ttl_remaining"}`` to
+  stdout, where ``ttl_remaining`` is the remaining lifetime of the temp file in
+  seconds. The credential value itself is NEVER part of the JSON — only the path
+  to the temp file is.
+
+All output modes write the value to the same 5-minute-TTL temp file; they only
+differ in what they print to stdout. The value is never on stdout.
+
 Exit codes:
   0 = OK
   1 = Argument error
@@ -21,6 +36,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import sys
 
@@ -56,6 +72,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "(Reserved) Skip remote-backend fallback. No remote backend is "
             "configured in this release."
+        ),
+    )
+    out = p.add_mutually_exclusive_group()
+    out.add_argument(
+        "--print-path",
+        action="store_true",
+        help=(
+            "Print ONLY the absolute temp-file path (no human-readable text). "
+            "Useful for piping straight into a file reader."
+        ),
+    )
+    out.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help=(
+            "Print a JSON object {name, path, ttl_remaining} to stdout. "
+            "The value itself is never part of the JSON."
         ),
     )
     return p.parse_args(argv)
@@ -108,6 +142,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    if args.export_env and (args.print_path or args.as_json):
+        print(
+            "ERROR: --export-env cannot be combined with --print-path or --json.",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         cc.default_backend()
     except RuntimeError as exc:
@@ -127,7 +168,19 @@ def main(argv: list[str] | None = None) -> int:
     tmp_path = cc.write_tmp_value(args.name, value)
     backend = cc.backend_label()
 
-    if args.export_env:
+    if args.print_path:
+        # Only the path — no decoration, so callers can read the file directly.
+        print(str(tmp_path))
+    elif args.as_json:
+        # ttl_remaining is the remaining lifetime of the temp file in seconds.
+        # The value itself is intentionally NOT part of the JSON.
+        payload = {
+            "name": safe,
+            "path": str(tmp_path),
+            "ttl_remaining": cc.tmp_ttl_remaining(args.name),
+        }
+        print(json.dumps(payload))
+    elif args.export_env:
         env_name = safe.upper().replace("-", "_").replace(".", "_")
         print(_emit_export(env_name, tmp_path, args.shell))
     else:

@@ -2,15 +2,17 @@
 
 Usage:
   secret-paste <KEY_NAME> [--ttl=24] [--persist] [--desc="Brevo API key"]
+  secret-paste --enable-remote | --disable-remote | --show-config
 
 Stores the value via the platform backend:
 
 * Windows: DPAPI-encrypted blob under ``%LOCALAPPDATA%\\secret-paste\\``.
 * macOS / Linux: via ``keyring`` (Keychain / libsecret / kwallet).
 
-A "Mirror to remote backend" checkbox is shown in the dialog but disabled in
-this release. Remote backends (Bitwarden, 1Password, sops/age) are planned via
-the ``VaultBackend`` plugin interface — see ROADMAP.md.
+A "Mirror to remote backend" checkbox is shown only when the user has enabled
+remote mirroring (``secret-paste --enable-remote``) AND a supported vault CLI
+is detected on PATH. Remote backends plug in via the ``VaultBackend`` interface
+(sops/age skeleton shipped; Bitwarden / 1Password planned) — see ROADMAP.md.
 """
 
 from __future__ import annotations
@@ -30,7 +32,39 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Keychain / Linux Secret Service)."
         ),
     )
-    p.add_argument("name", help="Key name (e.g. BREVO_KEY)")
+    p.add_argument(
+        "name",
+        nargs="?",
+        help="Key name (e.g. BREVO_KEY). Optional when using a --*-remote / --show-config flag.",
+    )
+    remote = p.add_mutually_exclusive_group()
+    remote.add_argument(
+        "--enable-remote",
+        action="store_true",
+        help="Enable remote mirroring (sets remote_enabled=true in config) and exit.",
+    )
+    remote.add_argument(
+        "--disable-remote",
+        action="store_true",
+        help="Disable remote mirroring (sets remote_enabled=false in config) and exit.",
+    )
+    p.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Print the current config (remote_enabled, remote_backend) and exit.",
+    )
+    p.add_argument(
+        "--set-remote",
+        metavar="TYPE",
+        help=(
+            "Configure the remote backend type (e.g. 'sops-age') and exit. "
+            "Pass an empty string to clear it. Use --recipient for sops-age."
+        ),
+    )
+    p.add_argument(
+        "--recipient",
+        help="age recipient (public key, age1...) used with --set-remote sops-age.",
+    )
     p.add_argument(
         "--ttl",
         type=int,
@@ -65,17 +99,113 @@ def _font(weight: str = "normal", size: int = 10) -> tuple:
     return (family, size, weight)
 
 
-def _apply_theme(root) -> None:
-    """Pick a per-OS modern ttk theme. Pure stdlib, no extra deps."""
+def _prefers_dark_mode() -> bool:
+    """Best-effort OS dark-mode detection. Pure stdlib, never raises.
+
+    * Windows: ``HKCU\\...\\Themes\\Personalize\\AppsUseLightTheme`` (0 = dark).
+    * macOS: ``defaults read -g AppleInterfaceStyle`` returns ``Dark`` only when
+      dark mode is on (errors out otherwise).
+    * Linux: ``gsettings`` color-scheme / GTK theme name heuristic.
+
+    Returns ``False`` if detection is unavailable or ambiguous (light is the
+    safe default — it matches the legacy look).
+    """
+    try:
+        if sys.platform == "win32":
+            import winreg  # type: ignore
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            try:
+                val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            finally:
+                winreg.CloseKey(key)
+            return val == 0
+
+        if sys.platform == "darwin":
+            import subprocess
+
+            out = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return out.returncode == 0 and "dark" in out.stdout.strip().lower()
+
+        # Linux / other POSIX: best-effort via gsettings.
+        import subprocess
+
+        for schema, key in (
+            ("org.gnome.desktop.interface", "color-scheme"),
+            ("org.gnome.desktop.interface", "gtk-theme"),
+        ):
+            try:
+                out = subprocess.run(
+                    ["gsettings", "get", schema, key],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+            except (FileNotFoundError, OSError):
+                return False
+            if out.returncode == 0 and "dark" in out.stdout.strip().lower():
+                return True
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# Color palettes for the dialog. ttk themes don't expose a portable dark mode,
+# so we drive label / accent colors ourselves and tint the window background.
+_LIGHT_COLORS = {
+    "bg": None,  # None = leave the native window background untouched
+    "header": "#1a1a1a",
+    "hint": "#666666",
+    "muted": "#999999",
+    "backend": "#3a7bd5",
+    "accent_bg": "#3a7bd5",
+    "accent_active": "#2f66b3",
+    "accent_disabled": "#9bb8e0",
+}
+_DARK_COLORS = {
+    "bg": "#1e1e1e",
+    "header": "#f0f0f0",
+    "hint": "#b8b8b8",
+    "muted": "#888888",
+    "backend": "#6aa6f0",
+    "accent_bg": "#4a8be0",
+    "accent_active": "#5a9bf0",
+    "accent_disabled": "#3a4a5e",
+}
+
+
+def _apply_theme(root, dark: bool | None = None) -> dict:
+    """Pick a per-OS ttk theme and apply a light/dark color palette.
+
+    ``dark`` forces the palette; ``None`` auto-detects from the OS. Pure
+    stdlib, no extra deps. Returns the active color dict so callers can tint
+    non-ttk widgets (e.g. an overrideredirect toast) consistently.
+    """
     from tkinter import ttk
+
+    if dark is None:
+        dark = _prefers_dark_mode()
+    colors = _DARK_COLORS if dark else _LIGHT_COLORS
 
     style = ttk.Style(root)
     available = set(style.theme_names())
     preferred = []
     if sys.platform == "darwin":
-        preferred = ["aqua"]
+        # 'aqua' renders its own dark mode natively; for our manual dark palette
+        # 'clam' honors background overrides far better, so prefer it when dark.
+        preferred = ["clam", "aqua"] if dark else ["aqua", "clam"]
     elif sys.platform == "win32":
-        preferred = ["vista", "winnative", "xpnative"]
+        # The native Windows themes ignore background overrides, so for dark we
+        # fall back to 'clam' which actually paints our colors.
+        preferred = ["clam"] if dark else ["vista", "winnative", "xpnative"]
     else:
         preferred = ["clam"]
     for t in preferred:
@@ -85,10 +215,49 @@ def _apply_theme(root) -> None:
                 break
             except Exception:  # noqa: BLE001
                 continue
-    style.configure("Header.TLabel", font=_font("bold", 13))
-    style.configure("Hint.TLabel", foreground="#666", font=_font("normal", 9))
-    style.configure("Muted.TLabel", foreground="#999", font=_font("normal", 8))
-    style.configure("Backend.TLabel", foreground="#3a7bd5", font=_font("normal", 9))
+
+    # Tint the window + ttk surfaces when a dark background is requested.
+    if colors["bg"]:
+        try:
+            root.configure(bg=colors["bg"])
+            style.configure(".", background=colors["bg"], foreground=colors["header"])
+            style.configure("TFrame", background=colors["bg"])
+            style.configure("TLabel", background=colors["bg"])
+            style.configure("TCheckbutton", background=colors["bg"], foreground=colors["hint"])
+            style.map(
+                "TCheckbutton",
+                background=[("active", colors["bg"])],
+            )
+            style.configure("TSeparator", background=colors["bg"])
+        except Exception:  # noqa: BLE001
+            pass
+
+    style.configure("Header.TLabel", font=_font("bold", 15), foreground=colors["header"])
+    style.configure("Hint.TLabel", foreground=colors["hint"], font=_font("normal", 9))
+    style.configure("Muted.TLabel", foreground=colors["muted"], font=_font("normal", 8))
+    style.configure("Backend.TLabel", foreground=colors["backend"], font=_font("normal", 9))
+    # Accent button for the primary action. Pure ttk, no extra deps — not every
+    # theme honors every option, so this is configured defensively.
+    try:
+        style.configure(
+            "Accent.TButton",
+            font=_font("bold", 10),
+            foreground="#ffffff",
+            background=colors["accent_bg"],
+            padding=(14, 6),
+        )
+        style.map(
+            "Accent.TButton",
+            background=[
+                ("active", colors["accent_active"]),
+                ("disabled", colors["accent_disabled"]),
+            ],
+            foreground=[("disabled", "#eeeeee")],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return colors
 
 
 def show_dialog(
@@ -132,9 +301,28 @@ def show_dialog(
     persist_var = tk.BooleanVar(value=default_persist)
     vault_var = tk.BooleanVar(value=False)
 
-    entry = ttk.Entry(outer, textvariable=value_var, show="*", width=60)
-    entry.pack(fill="x", pady=(4, 4))
+    # Input row: field + "Paste" button side by side. The button pulls the
+    # value from the clipboard into the field — convenient, and the value still
+    # never touches the chat.
+    entry_row = ttk.Frame(outer)
+    entry_row.pack(fill="x", pady=(4, 4))
+    entry = ttk.Entry(entry_row, textvariable=value_var, show="*")
+    entry.pack(side="left", fill="x", expand=True)
     entry.focus_set()
+
+    def paste_clipboard():
+        try:
+            clip = root.clipboard_get()
+        except Exception:  # noqa: BLE001  — empty / non-text clipboard
+            clip = ""
+        if clip:
+            value_var.set(clip.strip("\r\n"))
+            entry.icursor("end")
+        entry.focus_set()
+
+    ttk.Button(entry_row, text="Paste", width=8, command=paste_clipboard).pack(
+        side="left", padx=(8, 0)
+    )
 
     err_lbl = ttk.Label(outer, text="", foreground="#d23", style="Hint.TLabel")
     err_lbl.pack(anchor="w")
@@ -152,20 +340,29 @@ def show_dialog(
         anchor="w"
     )
 
-    ttk.Separator(outer).pack(fill="x", pady=10)
+    # Mirror-to-remote is only offered when the user has opted in
+    # (remote_enabled) AND at least one supported vault CLI is detected on
+    # PATH. Otherwise the checkbox is not rendered at all (rather than shown
+    # disabled), so the dialog stays clean for the common local-only case.
+    cfg = cc.load_config()
+    detected_vaults = cc.detect_vaults()
+    show_mirror = bool(cfg.get("remote_enabled")) and bool(detected_vaults)
 
-    ttk.Checkbutton(
-        outer,
-        text="Also mirror to remote backend (coming soon)",
-        variable=vault_var,
-        state="disabled",
-    ).pack(anchor="w")
-    ttk.Label(
-        outer,
-        text="Remote backends (Bitwarden / 1Password / sops) planned — see ROADMAP.md.",
-        style="Muted.TLabel",
-        wraplength=520,
-    ).pack(anchor="w", padx=(22, 0))
+    if show_mirror:
+        ttk.Separator(outer).pack(fill="x", pady=10)
+        ttk.Checkbutton(
+            outer,
+            text="Also mirror to remote backend",
+            variable=vault_var,
+        ).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
+            style="Muted.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", padx=(22, 0))
+    else:
+        ttk.Separator(outer).pack(fill="x", pady=10)
 
     ttk.Checkbutton(
         outer,
@@ -197,7 +394,13 @@ def show_dialog(
     btn_frame = ttk.Frame(outer)
     btn_frame.pack(fill="x", pady=(14, 0))
     ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
-    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=(0, 8))
+    ok_btn = ttk.Button(btn_frame, text="Save", command=on_ok)
+    # Apply the accent style only if the theme supports it — fall back otherwise.
+    try:
+        ok_btn.configure(style="Accent.TButton")
+    except Exception:  # noqa: BLE001
+        pass
+    ok_btn.pack(side="right", padx=(0, 8))
 
     root.bind("<Return>", on_ok)
     root.bind("<Escape>", on_cancel)
@@ -255,8 +458,57 @@ def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
         pass
 
 
+def _print_config() -> None:
+    cfg = cc.load_config()
+    detected = cc.detect_vaults()
+    print(f"remote_enabled: {cfg.get('remote_enabled')}")
+    print(f"remote_backend: {cfg.get('remote_backend')}")
+    print(f"detected vault CLIs: {', '.join(detected) if detected else '(none)'}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+
+    # Config-management commands run first and exit early — they do not need a
+    # key name and do not open the dialog.
+    if args.enable_remote or args.disable_remote:
+        cfg = cc.set_remote_enabled(bool(args.enable_remote))
+        state = "enabled" if cfg["remote_enabled"] else "disabled"
+        print(f"OK: remote mirroring {state}.")
+        if args.enable_remote and not cc.detect_vaults():
+            print(
+                "NOTE: no supported vault CLI (age/sops/bw/op) detected on PATH yet; "
+                "the mirror option stays hidden until one is installed.",
+                file=sys.stderr,
+            )
+        return 0
+    if args.set_remote is not None:
+        backend_type = args.set_remote or None  # empty string clears it
+        try:
+            cfg = cc.set_remote_backend(backend_type, recipient=args.recipient)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        print(f"OK: remote backend set to {cfg['remote_backend']}.")
+        if backend_type == "sops-age" and not args.recipient:
+            print(
+                "NOTE: no --recipient given; sops-age needs an age recipient "
+                "(age1...) to encrypt to before mirroring will work.",
+                file=sys.stderr,
+            )
+        return 0
+    if args.show_config:
+        _print_config()
+        return 0
+
+    if not args.name:
+        print(
+            "ERROR: a key name is required (or use --enable-remote / "
+            "--disable-remote / --show-config).",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         cc._safe_name(args.name)
     except ValueError as exc:

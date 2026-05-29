@@ -55,3 +55,29 @@ def test_cleanup_ignores_unparseable_marker(isolated_dirs, fake_backend):
     marker.write_text("not-iso", encoding="utf-8")
     # Should not raise; just skip
     core.cleanup_tmp()
+
+
+def test_ttl_remaining_fresh_value_in_window(isolated_dirs, fake_backend):
+    core.write_tmp_value("R1", "x")
+    remaining = core.tmp_ttl_remaining("R1")
+    assert remaining is not None
+    assert 0 < remaining <= core.TMP_TTL_MINUTES * 60
+
+
+def test_ttl_remaining_expired_clamps_to_zero(isolated_dirs, fake_backend):
+    p = core.write_tmp_value("R2", "x")
+    marker = p.with_suffix(".val.expires")
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    marker.write_text(past.isoformat(), encoding="utf-8")
+    assert core.tmp_ttl_remaining("R2") == 0
+
+
+def test_ttl_remaining_no_marker_returns_none(isolated_dirs, fake_backend):
+    assert core.tmp_ttl_remaining("NEVER_WRITTEN") is None
+
+
+def test_ttl_remaining_unparseable_marker_returns_none(isolated_dirs, fake_backend):
+    p = core.write_tmp_value("R3", "x")
+    marker = p.with_suffix(".val.expires")
+    marker.write_text("garbage", encoding="utf-8")
+    assert core.tmp_ttl_remaining("R3") is None

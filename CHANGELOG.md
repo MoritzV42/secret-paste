@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-05-29
+
+### Added
+
+- `secret-get --print-path` — prints only the absolute temp-file path (no
+  human-readable `OK:` line), so callers can read the file without parsing
+  stdout with a regex.
+- `secret-get --json` — prints a machine-readable
+  `{"name", "path", "ttl_remaining"}` object. `ttl_remaining` is the temp
+  file's remaining lifetime in seconds. The credential value is never part of
+  the JSON — only the path to the 5-minute-TTL temp file.
+- `secret_paste_core.tmp_ttl_remaining(name)` helper backing `--json`.
+- Optional, **write-only** remote mirror (off by default):
+  - `secret-paste --enable-remote` / `--disable-remote` / `--show-config`
+    manage the feature flag (persisted in `config.json`).
+  - `secret-paste --set-remote sops-age --recipient age1...` configures the
+    remote backend.
+  - File-based sops/age backend skeleton. Write-only by design — `secret-get`
+    can never read back from a remote mirror (enforced at a single choke point).
+  - Vault detection (`age`/`sops`/`bw`/`op` on PATH); the dialog's mirror
+    checkbox renders only when a vault is detected and the feature is enabled,
+    and a remote-write failure never corrupts the local store.
+- `SETUP.md` — AI-assisted install: hand the prompt to your AI coding agent to
+  install and configure secret-paste (incl. the optional, write-only vault
+  mirror) tailored to your machine.
+
+### Changed
+
+- Paste dialog polish (pure stdlib, no new dependencies): a "Paste" button next
+  to the input field, an accent-styled primary button, a larger header, and
+  **OS dark-mode detection** with a matching light/dark palette.
+- Product UI and strings are consistently English.
 
 ## [0.1.0] — 2026-05-14
 
@@ -48,5 +79,5 @@ First public release.
 - The "Mirror to remote backend" checkbox in the paste dialog is visible
   but disabled.
 
-[Unreleased]: https://github.com/MoritzV42/secret-paste/compare/v0.1.0...HEAD
+[1.0.0]: https://github.com/MoritzV42/secret-paste/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/MoritzV42/secret-paste/releases/tag/v0.1.0
