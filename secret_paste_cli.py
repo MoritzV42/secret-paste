@@ -23,6 +23,30 @@ import sys
 import secret_paste_core as cc
 
 
+def _enable_dpi_awareness() -> None:
+    """Make the process DPI-aware on Windows so tkinter renders crisply.
+
+    Without this, tkinter windows are bitmap-scaled by Windows on HighDPI
+    displays and look blurry. ``SetProcessDpiAwareness(1)`` opts into
+    system-DPI awareness. Fully defensive: any failure (non-Windows, missing
+    API on old Windows, already-set) is swallowed — DPI awareness is a
+    nice-to-have, never a hard requirement.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        # PROCESS_SYSTEM_DPI_AWARE = 1. Available since Windows 8.1.
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:  # noqa: BLE001
+        # Fall back to the older Vista+ API if shcore is unavailable.
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="secret-paste",
@@ -158,8 +182,25 @@ def _prefers_dark_mode() -> bool:
         return False
 
 
-# Color palettes for the dialog. ttk themes don't expose a portable dark mode,
-# so we drive label / accent colors ourselves and tint the window background.
+# Brand palette (matches the moritzvoigt landing page). Dark-first, cyan→violet
+# accent. Used by the CustomTkinter dialog directly and by the ttk fallback for
+# the dark palette below.
+BRAND = {
+    "bg": "#0a0c16",
+    "surface": "#141a2e",
+    "surface_alt": "#1a2138",
+    "line": "#232b45",
+    "text": "#eef2fb",
+    "muted": "#aab4d0",
+    "cyan": "#22d3ee",
+    "cyan_light": "#6ee7ff",
+    "violet": "#8b5cf6",
+    "violet_light": "#a78bfa",
+}
+
+# Color palettes for the ttk fallback dialog. ttk themes don't expose a portable
+# dark mode, so we drive label / accent colors ourselves and tint the window
+# background.
 _LIGHT_COLORS = {
     "bg": None,  # None = leave the native window background untouched
     "header": "#1a1a1a",
@@ -169,16 +210,24 @@ _LIGHT_COLORS = {
     "accent_bg": "#3a7bd5",
     "accent_active": "#2f66b3",
     "accent_disabled": "#9bb8e0",
+    # Entry colors: leave native (light field, dark text) for the light theme.
+    "entry_bg": "#ffffff",
+    "entry_fg": "#1a1a1a",
 }
+# Dark fallback uses the brand palette. Crucially ``entry_bg``/``entry_fg`` give
+# the input field a dark background with light text — fixing the legacy bug
+# where the field stayed white with hard-to-read light-grey text in dark mode.
 _DARK_COLORS = {
-    "bg": "#1e1e1e",
-    "header": "#f0f0f0",
-    "hint": "#b8b8b8",
-    "muted": "#888888",
-    "backend": "#6aa6f0",
-    "accent_bg": "#4a8be0",
-    "accent_active": "#5a9bf0",
-    "accent_disabled": "#3a4a5e",
+    "bg": BRAND["bg"],
+    "header": BRAND["text"],
+    "hint": BRAND["muted"],
+    "muted": "#7e89a8",
+    "backend": BRAND["cyan_light"],
+    "accent_bg": BRAND["violet"],
+    "accent_active": BRAND["violet_light"],
+    "accent_disabled": BRAND["line"],
+    "entry_bg": BRAND["surface_alt"],
+    "entry_fg": BRAND["text"],
 }
 
 
@@ -228,7 +277,25 @@ def _apply_theme(root, dark: bool | None = None) -> dict:
                 "TCheckbutton",
                 background=[("active", colors["bg"])],
             )
-            style.configure("TSeparator", background=colors["bg"])
+            style.configure("TSeparator", background=colors["line"])
+            # Dark-mode contrast fix for the input field: a dark field with
+            # light text (the legacy look left the field white + light-grey
+            # text, which was nearly unreadable). ``fieldbackground`` is the
+            # option ttk actually honors for the entry's interior.
+            style.configure(
+                "TEntry",
+                fieldbackground=colors["entry_bg"],
+                foreground=colors["entry_fg"],
+                insertcolor=colors["entry_fg"],
+                bordercolor=colors["line"],
+                lightcolor=colors["line"],
+                darkcolor=colors["line"],
+            )
+            style.map(
+                "TEntry",
+                fieldbackground=[("focus", colors["entry_bg"])],
+                foreground=[("focus", colors["entry_fg"])],
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -260,13 +327,63 @@ def _apply_theme(root, dark: bool | None = None) -> dict:
     return colors
 
 
+def _fade_in(window, *, duration_ms: int = 150, steps: int = 12) -> None:
+    """Animate the window opacity from 0 → 1 over ``duration_ms``.
+
+    Tasteful, subtle. Fully defensive — platforms / WMs that ignore the
+    ``-alpha`` attribute simply show the window immediately. Works for both
+    tkinter and CustomTkinter windows (both expose ``attributes``/``after``).
+    """
+    try:
+        window.attributes("-alpha", 0.0)
+    except Exception:  # noqa: BLE001
+        return  # alpha unsupported — window is already fully visible
+    delay = max(1, duration_ms // steps)
+
+    def step(i: int) -> None:
+        try:
+            window.attributes("-alpha", min(1.0, i / steps))
+        except Exception:  # noqa: BLE001
+            return
+        if i < steps:
+            window.after(delay, step, i + 1)
+
+    window.after(delay, step, 1)
+
+
 def show_dialog(
     key_name: str,
     description: str,
     default_persist: bool,
     backend_label: str,
 ) -> tuple[bool, str, bool, bool]:
-    """Modal dialog. Returns ``(ok, value, vault_checkbox, persist_checkbox)``."""
+    """Modal dialog. Returns ``(ok, value, vault_checkbox, persist_checkbox)``.
+
+    Prefers the modern CustomTkinter UI when the optional ``customtkinter``
+    dependency is installed; otherwise falls back to the pure-stdlib ttk
+    dialog (DPI-aware + dark-mode contrast fixed). Both honor the exact same
+    return contract, so ``main()`` never needs to know which path ran.
+    """
+    _enable_dpi_awareness()
+    try:
+        import customtkinter  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return _show_dialog_ttk(key_name, description, default_persist, backend_label)
+    try:
+        return _show_dialog_ctk(key_name, description, default_persist, backend_label)
+    except Exception:  # noqa: BLE001
+        # If the modern UI fails for any reason, never block the user — fall
+        # back to the always-available stdlib dialog.
+        return _show_dialog_ttk(key_name, description, default_persist, backend_label)
+
+
+def _show_dialog_ttk(
+    key_name: str,
+    description: str,
+    default_persist: bool,
+    backend_label: str,
+) -> tuple[bool, str, bool, bool]:
+    """Pure-stdlib ttk fallback dialog (DPI-aware + dark-contrast fixed)."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -406,6 +523,257 @@ def show_dialog(
     root.bind("<Escape>", on_cancel)
     root.protocol("WM_DELETE_WINDOW", on_cancel)
 
+    _fade_in(root)
+    root.mainloop()
+
+    if not result.get("ok"):
+        return False, "", False, False
+    return (
+        True,
+        result["value"],
+        bool(result.get("vault")),
+        bool(result.get("persist")),
+    )
+
+
+def _show_dialog_ctk(
+    key_name: str,
+    description: str,
+    default_persist: bool,
+    backend_label: str,
+) -> tuple[bool, str, bool, bool]:
+    """Modern CustomTkinter dialog. Same return contract as the ttk path.
+
+    Uses the brand palette (dark-first, cyan→violet accent) and respects the
+    OS light/dark preference via ``appearance_mode="system"``. CustomTkinter
+    handles HighDPI scaling natively, so no blur on HighDPI displays.
+    """
+    import customtkinter as ctk
+
+    ctk.set_appearance_mode("system")
+
+    root = ctk.CTk()
+    root.title(f"secret-paste: {key_name}")
+
+    # Brand-tinted window background. When the OS is in light mode, CTk widgets
+    # adapt their own colors; we still paint the frame surfaces consistently.
+    root.configure(fg_color=(BRAND["surface"], BRAND["bg"]))
+    root.attributes("-topmost", True)
+    root.lift()
+    root.focus_force()
+    try:
+        root.geometry("580x420")
+        root.minsize(520, 360)
+    except Exception:  # noqa: BLE001
+        pass
+
+    font_family = _FONT_BY_OS.get(sys.platform, "")
+    f_header = ctk.CTkFont(family=font_family, size=20, weight="bold")
+    f_body = ctk.CTkFont(family=font_family, size=13)
+    f_small = ctk.CTkFont(family=font_family, size=12)
+    f_btn = ctk.CTkFont(family=font_family, size=13, weight="bold")
+
+    outer = ctk.CTkFrame(root, fg_color="transparent")
+    outer.pack(fill="both", expand=True, padx=26, pady=22)
+
+    ctk.CTkLabel(
+        outer,
+        text=f"Enter credential: {key_name}",
+        font=f_header,
+        text_color=BRAND["text"],
+        anchor="w",
+    ).pack(anchor="w", fill="x")
+
+    ctk.CTkLabel(
+        outer,
+        text=(
+            description
+            or "Paste the value (Ctrl+V on Win/Linux, ⌘V on macOS). "
+            "Stored locally on this machine."
+        ),
+        font=f_small,
+        text_color=BRAND["muted"],
+        anchor="w",
+        justify="left",
+        wraplength=520,
+    ).pack(anchor="w", fill="x", pady=(4, 14))
+
+    value_var = ctk.StringVar()
+    show_var = ctk.BooleanVar(value=False)
+    persist_var = ctk.BooleanVar(value=default_persist)
+    vault_var = ctk.BooleanVar(value=False)
+
+    # Input row: masked field + "Show value" toggle would crowd the row, so the
+    # toggle lives below. Field + "Paste" button sit side by side.
+    entry_row = ctk.CTkFrame(outer, fg_color="transparent")
+    entry_row.pack(fill="x")
+    entry = ctk.CTkEntry(
+        entry_row,
+        textvariable=value_var,
+        show="*",
+        font=f_body,
+        height=40,
+        fg_color=BRAND["surface_alt"],
+        text_color=BRAND["text"],
+        border_color=BRAND["line"],
+        placeholder_text="",
+    )
+    entry.pack(side="left", fill="x", expand=True)
+    entry.focus_set()
+
+    def paste_clipboard():
+        try:
+            clip = root.clipboard_get()
+        except Exception:  # noqa: BLE001  — empty / non-text clipboard
+            clip = ""
+        if clip:
+            value_var.set(clip.strip("\r\n"))
+            entry.icursor("end")
+        entry.focus_set()
+
+    ctk.CTkButton(
+        entry_row,
+        text="Paste",
+        width=84,
+        height=40,
+        command=paste_clipboard,
+        font=f_small,
+        fg_color=BRAND["surface_alt"],
+        hover_color=BRAND["line"],
+        text_color=BRAND["text"],
+        border_width=1,
+        border_color=BRAND["line"],
+    ).pack(side="left", padx=(10, 0))
+
+    err_lbl = ctk.CTkLabel(
+        outer, text="", font=f_small, text_color="#f87171", anchor="w"
+    )
+    err_lbl.pack(anchor="w", fill="x", pady=(4, 0))
+
+    def toggle_show():
+        entry.configure(show="" if show_var.get() else "*")
+
+    def clear_error(*_):
+        if err_lbl.cget("text"):
+            err_lbl.configure(text="")
+
+    value_var.trace_add("write", clear_error)
+
+    ctk.CTkCheckBox(
+        outer,
+        text="Show value",
+        variable=show_var,
+        command=toggle_show,
+        font=f_small,
+        text_color=BRAND["muted"],
+        fg_color=BRAND["violet"],
+        hover_color=BRAND["violet_light"],
+        border_color=BRAND["line"],
+    ).pack(anchor="w", pady=(6, 0))
+
+    # Mirror-to-remote is only offered when the user has opted in
+    # (remote_enabled) AND at least one supported vault CLI is detected on PATH.
+    cfg = cc.load_config()
+    detected_vaults = cc.detect_vaults()
+    show_mirror = bool(cfg.get("remote_enabled")) and bool(detected_vaults)
+
+    if show_mirror:
+        ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
+        ctk.CTkCheckBox(
+            outer,
+            text="Also mirror to remote backend",
+            variable=vault_var,
+            font=f_small,
+            text_color=BRAND["text"],
+            fg_color=BRAND["violet"],
+            hover_color=BRAND["violet_light"],
+            border_color=BRAND["line"],
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            outer,
+            text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
+            font=f_small,
+            text_color=BRAND["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=520,
+        ).pack(anchor="w", fill="x", padx=(28, 0))
+    else:
+        ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
+
+    ctk.CTkCheckBox(
+        outer,
+        text="Store permanently (no local TTL)",
+        variable=persist_var,
+        font=f_small,
+        text_color=BRAND["text"],
+        fg_color=BRAND["violet"],
+        hover_color=BRAND["violet_light"],
+        border_color=BRAND["line"],
+    ).pack(anchor="w", pady=(6, 4))
+
+    ctk.CTkLabel(
+        outer,
+        text=f"Backend: {backend_label}",
+        font=f_small,
+        text_color=BRAND["cyan_light"],
+        anchor="w",
+    ).pack(anchor="w", fill="x", pady=(12, 0))
+
+    result: dict = {"ok": False}
+
+    def on_ok(event=None):
+        if not value_var.get():
+            err_lbl.configure(text="Please enter a value.")
+            entry.focus_set()
+            return
+        result["ok"] = True
+        result["value"] = value_var.get()
+        result["vault"] = vault_var.get()
+        result["persist"] = persist_var.get()
+        root.destroy()
+
+    def on_cancel(event=None):
+        result["ok"] = False
+        root.destroy()
+
+    btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
+    btn_frame.pack(fill="x", side="bottom", pady=(16, 0))
+
+    ctk.CTkButton(
+        btn_frame,
+        text="Cancel",
+        width=110,
+        height=42,
+        command=on_cancel,
+        font=f_btn,
+        fg_color="transparent",
+        hover_color=BRAND["surface_alt"],
+        text_color=BRAND["muted"],
+        border_width=1,
+        border_color=BRAND["line"],
+    ).pack(side="right")
+
+    # Primary "Save" action in the cyan→violet brand accent. CTk buttons don't
+    # render gradients, so we use the violet end as a solid fill with a cyan
+    # hover — reading as the same accent family as the landing page.
+    ctk.CTkButton(
+        btn_frame,
+        text="Save",
+        width=140,
+        height=42,
+        command=on_ok,
+        font=f_btn,
+        fg_color=BRAND["violet"],
+        hover_color=BRAND["cyan"],
+        text_color="#ffffff",
+    ).pack(side="right", padx=(0, 10))
+
+    root.bind("<Return>", on_ok)
+    root.bind("<Escape>", on_cancel)
+    root.protocol("WM_DELETE_WINDOW", on_cancel)
+
+    _fade_in(root)
     root.mainloop()
 
     if not result.get("ok"):
@@ -420,6 +788,7 @@ def show_dialog(
 
 def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
     """Brief auto-closing confirmation popup after a successful paste."""
+    _enable_dpi_awareness()
     try:
         import tkinter as tk
         from tkinter import ttk
