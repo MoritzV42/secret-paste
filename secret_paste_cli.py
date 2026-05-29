@@ -8,9 +8,10 @@ Stores the value via the platform backend:
 * Windows: DPAPI-encrypted blob under ``%LOCALAPPDATA%\\secret-paste\\``.
 * macOS / Linux: via ``keyring`` (Keychain / libsecret / kwallet).
 
-A "Mirror to remote backend" checkbox is shown in the dialog but disabled in
-this release. Remote backends (Bitwarden, 1Password, sops/age) are planned via
-the ``VaultBackend`` plugin interface — see ROADMAP.md.
+A "Mirror to remote backend" checkbox is shown only when the user has enabled
+remote mirroring (``secret-paste --enable-remote``) AND a supported vault CLI
+is detected on PATH. Remote backends plug in via the ``VaultBackend`` interface
+(sops/age skeleton shipped; Bitwarden / 1Password planned) — see ROADMAP.md.
 """
 
 from __future__ import annotations
@@ -306,20 +307,29 @@ def show_dialog(
         anchor="w"
     )
 
-    ttk.Separator(outer).pack(fill="x", pady=10)
+    # Mirror-to-remote is only offered when the user has opted in
+    # (remote_enabled) AND at least one supported vault CLI is detected on
+    # PATH. Otherwise the checkbox is not rendered at all (rather than shown
+    # disabled), so the dialog stays clean for the common local-only case.
+    cfg = cc.load_config()
+    detected_vaults = cc.detect_vaults()
+    show_mirror = bool(cfg.get("remote_enabled")) and bool(detected_vaults)
 
-    ttk.Checkbutton(
-        outer,
-        text="Also mirror to remote backend (coming soon)",
-        variable=vault_var,
-        state="disabled",
-    ).pack(anchor="w")
-    ttk.Label(
-        outer,
-        text="Remote backends (Bitwarden / 1Password / sops) planned — see ROADMAP.md.",
-        style="Muted.TLabel",
-        wraplength=520,
-    ).pack(anchor="w", padx=(22, 0))
+    if show_mirror:
+        ttk.Separator(outer).pack(fill="x", pady=10)
+        ttk.Checkbutton(
+            outer,
+            text="Also mirror to remote backend",
+            variable=vault_var,
+        ).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
+            style="Muted.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", padx=(22, 0))
+    else:
+        ttk.Separator(outer).pack(fill="x", pady=10)
 
     ttk.Checkbutton(
         outer,
