@@ -2,6 +2,7 @@
 
 Usage:
   secret-paste <KEY_NAME> [--ttl=24] [--persist] [--desc="Brevo API key"]
+  secret-paste --enable-remote | --disable-remote | --show-config
 
 Stores the value via the platform backend:
 
@@ -31,7 +32,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Keychain / Linux Secret Service)."
         ),
     )
-    p.add_argument("name", help="Key name (e.g. BREVO_KEY)")
+    p.add_argument(
+        "name",
+        nargs="?",
+        help="Key name (e.g. BREVO_KEY). Optional when using a --*-remote / --show-config flag.",
+    )
+    remote = p.add_mutually_exclusive_group()
+    remote.add_argument(
+        "--enable-remote",
+        action="store_true",
+        help="Enable remote mirroring (sets remote_enabled=true in config) and exit.",
+    )
+    remote.add_argument(
+        "--disable-remote",
+        action="store_true",
+        help="Disable remote mirroring (sets remote_enabled=false in config) and exit.",
+    )
+    p.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Print the current config (remote_enabled, remote_backend) and exit.",
+    )
     p.add_argument(
         "--ttl",
         type=int,
@@ -425,8 +446,42 @@ def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
         pass
 
 
+def _print_config() -> None:
+    cfg = cc.load_config()
+    detected = cc.detect_vaults()
+    print(f"remote_enabled: {cfg.get('remote_enabled')}")
+    print(f"remote_backend: {cfg.get('remote_backend')}")
+    print(f"detected vault CLIs: {', '.join(detected) if detected else '(none)'}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+
+    # Config-management commands run first and exit early — they do not need a
+    # key name and do not open the dialog.
+    if args.enable_remote or args.disable_remote:
+        cfg = cc.set_remote_enabled(bool(args.enable_remote))
+        state = "enabled" if cfg["remote_enabled"] else "disabled"
+        print(f"OK: remote mirroring {state}.")
+        if args.enable_remote and not cc.detect_vaults():
+            print(
+                "NOTE: no supported vault CLI (age/sops/bw/op) detected on PATH yet; "
+                "the mirror option stays hidden until one is installed.",
+                file=sys.stderr,
+            )
+        return 0
+    if args.show_config:
+        _print_config()
+        return 0
+
+    if not args.name:
+        print(
+            "ERROR: a key name is required (or use --enable-remote / "
+            "--disable-remote / --show-config).",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         cc._safe_name(args.name)
     except ValueError as exc:
