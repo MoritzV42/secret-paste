@@ -151,6 +151,28 @@ def test_sops_age_put_writes_entry(isolated_dirs, monkeypatch):
     assert b"plaintext" not in blob
 
 
+def test_configured_remote_backend_none_when_unset():
+    assert core.configured_remote_backend({"remote_backend": None}) is None
+
+
+def test_configured_remote_backend_from_dict():
+    be = core.configured_remote_backend(
+        {"remote_backend": {"type": "sops-age", "recipient": "age1xxx"}}
+    )
+    assert isinstance(be, core.SopsAgeBackend)
+    assert be.recipient == "age1xxx"
+
+
+def test_configured_remote_backend_from_string():
+    be = core.configured_remote_backend({"remote_backend": "sops-age"})
+    assert isinstance(be, core.SopsAgeBackend)
+
+
+def test_configured_remote_backend_unknown_type_raises():
+    with pytest.raises(ValueError, match="Unknown remote backend"):
+        core.configured_remote_backend({"remote_backend": {"type": "nope"}})
+
+
 def test_backend_label_reports_active_platform(monkeypatch):
     import sys
 

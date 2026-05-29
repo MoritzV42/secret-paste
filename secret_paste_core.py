@@ -293,7 +293,14 @@ def write_credential(
     ttl_hours: int | None,
     persist_to_vault: bool,
 ) -> str:
-    """Store ``value`` and write metadata. Returns backend tag."""
+    """Store ``value`` and write metadata. Returns backend tag.
+
+    If ``persist_to_vault`` is set AND remote mirroring is enabled in config
+    AND a remote backend is configured, the value is additionally pushed to the
+    remote backend. A remote failure NEVER corrupts the local store: the local
+    write completes first, and any remote error is caught and surfaced only as a
+    warning. The returned tag always reflects the local backend.
+    """
     backend = _store_value(name, value)
     now = datetime.now(timezone.utc)
     meta = {
@@ -304,7 +311,42 @@ def write_credential(
         "backend": backend,
     }
     meta_path(name).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    if persist_to_vault:
+        _mirror_to_remote(name, value, ttl_hours, persist_to_vault)
+
     return backend
+
+
+def _mirror_to_remote(
+    name: str,
+    value: str,
+    ttl_hours: int | None,
+    persist_to_vault: bool,
+) -> bool:
+    """Best-effort push to the configured remote backend. Never raises.
+
+    Returns True if the value was mirrored, False if mirroring was skipped
+    (disabled / not configured) or failed. Any exception from the remote
+    backend is swallowed and printed as a warning so the local store stays
+    intact.
+    """
+    cfg = load_config()
+    if not cfg.get("remote_enabled"):
+        return False
+    try:
+        remote = configured_remote_backend(cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: remote mirror skipped (backend config error): {exc}", file=sys.stderr)
+        return False
+    if remote is None:
+        return False
+    try:
+        remote.put(name, value, ttl_hours=ttl_hours, persist_to_vault=persist_to_vault)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: remote mirror failed for {name!r}: {exc}", file=sys.stderr)
+        return False
 
 
 def read_meta(name: str) -> dict | None:
@@ -747,6 +789,36 @@ class SopsAgeBackend(VaultBackend):
         for f in sorted(remote_dir().glob("*.age")):
             items.append(CredMeta(name=f.stem, source=self.name))
         return items
+
+
+def configured_remote_backend(cfg: dict | None = None) -> VaultBackend | None:
+    """Build the remote backend described by config, or None if not configured.
+
+    The ``remote_backend`` config value may be:
+      * ``None`` — no remote backend (returns None),
+      * a string — the backend type name (e.g. ``"sops-age"``),
+      * a dict — ``{"type": ..., <backend-specific options>}`` (e.g. an age
+        ``recipient`` for ``sops-age``).
+
+    Raises ``ValueError`` for an unknown backend type so misconfiguration is
+    visible rather than silently dropping writes.
+    """
+    if cfg is None:
+        cfg = load_config()
+    spec = cfg.get("remote_backend")
+    if not spec:
+        return None
+    if isinstance(spec, str):
+        btype, opts = spec, {}
+    elif isinstance(spec, dict):
+        btype = spec.get("type")
+        opts = {k: v for k, v in spec.items() if k != "type"}
+    else:
+        raise ValueError(f"Invalid remote_backend config: {spec!r}")
+
+    if btype == "sops-age":
+        return SopsAgeBackend(recipient=opts.get("recipient"))
+    raise ValueError(f"Unknown remote backend type: {btype!r}")
 
 
 # Stubs for future remote/portable backends — see ROADMAP.md:
