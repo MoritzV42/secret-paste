@@ -68,6 +68,46 @@ def test_default_backend_raises_when_none_available(monkeypatch):
         core.default_backend()
 
 
+class _WriteOnlyStub(core.VaultBackend):
+    """Minimal write-only backend used to exercise the read-capability guard."""
+
+    name = "write-only-stub"
+    supports_read = False
+
+    def __init__(self):
+        self._store: dict[str, str] = {}
+
+    def put(self, name, value, ttl_hours=None, persist_to_vault=False):
+        self._store[name] = value
+
+    def get(self, name):  # would leak if ever reached — guard must prevent it
+        raise AssertionError("get() must never be called on a write-only backend")
+
+    def delete(self, name):
+        return self._store.pop(name, None) is not None
+
+    def list(self):
+        return [core.CredMeta(name=n, source=self.name) for n in self._store]
+
+
+def test_default_backend_supports_read():
+    # Both shipped local backends are readable by default.
+    assert core.LocalDPAPIBackend().supports_read is True
+    assert core.KeyringBackend().supports_read is True
+
+
+def test_backend_get_helper_reads_readable_backend(patched_backend):
+    patched_backend.put("EPS", "v", ttl_hours=None, persist_to_vault=False)
+    assert core.backend_get(patched_backend, "EPS") == "v"
+
+
+def test_backend_get_helper_refuses_write_only_backend():
+    wo = _WriteOnlyStub()
+    wo.put("ZETA", "secret-value")
+    with pytest.raises(core.WriteOnlyError):
+        core.backend_get(wo, "ZETA")
+
+
 def test_backend_label_reports_active_platform(monkeypatch):
     import sys
 

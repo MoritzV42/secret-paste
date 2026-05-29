@@ -519,9 +519,16 @@ class VaultBackend(ABC):
 
     Implementations must NEVER print or log credential values. ``get`` is the
     only method allowed to return the plaintext value, and only to the caller.
+
+    Capability flag ``supports_read`` advertises whether this backend can serve
+    reads. A write-only backend (e.g. a remote mirror you push to but never read
+    back from) sets ``supports_read = False``; callers must route reads to a
+    readable backend instead and never call ``get`` on it. Use the module-level
+    ``backend_get`` helper, which enforces this.
     """
 
     name: str = "abstract"
+    supports_read: bool = True
 
     @abstractmethod
     def put(
@@ -544,6 +551,24 @@ class VaultBackend(ABC):
     @abstractmethod
     def list(self) -> list[CredMeta]:
         """Return metadata for all entries. Never returns values."""
+
+
+class WriteOnlyError(RuntimeError):
+    """Raised when a write-only backend is asked to read a credential."""
+
+
+def backend_get(backend: VaultBackend, name: str) -> str | None:
+    """Read a credential through a backend, enforcing the read capability.
+
+    Raises ``WriteOnlyError`` if the backend declares ``supports_read = False``
+    instead of calling its ``get``. This is the single choke point so that no
+    code path can accidentally read from a write-only mirror.
+    """
+    if not getattr(backend, "supports_read", True):
+        raise WriteOnlyError(
+            f"Backend {backend.name!r} is write-only and cannot be read from."
+        )
+    return backend.get(name)
 
 
 class LocalDPAPIBackend(VaultBackend):
