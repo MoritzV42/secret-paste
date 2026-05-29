@@ -49,6 +49,16 @@ on `PATH` on Windows, macOS, and Linux. The second command drops a
 any Claude session on this machine automatically uses secret-paste instead
 of asking you to paste credentials into chat.
 
+Optional — for the modern UI (CustomTkinter, crisp on HighDPI + a polished
+dark theme):
+
+```bash
+pipx install secret-paste[gui]
+```
+
+This is purely optional. Without it, `secret-paste` uses a zero-dependency
+stdlib (tkinter) dialog that is DPI-aware and dark-mode-correct on its own.
+
 ### From source
 
 ```bash
