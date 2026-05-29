@@ -54,6 +54,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Print the current config (remote_enabled, remote_backend) and exit.",
     )
     p.add_argument(
+        "--set-remote",
+        metavar="TYPE",
+        help=(
+            "Configure the remote backend type (e.g. 'sops-age') and exit. "
+            "Pass an empty string to clear it. Use --recipient for sops-age."
+        ),
+    )
+    p.add_argument(
+        "--recipient",
+        help="age recipient (public key, age1...) used with --set-remote sops-age.",
+    )
+    p.add_argument(
         "--ttl",
         type=int,
         default=24,
@@ -467,6 +479,21 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "NOTE: no supported vault CLI (age/sops/bw/op) detected on PATH yet; "
                 "the mirror option stays hidden until one is installed.",
+                file=sys.stderr,
+            )
+        return 0
+    if args.set_remote is not None:
+        backend_type = args.set_remote or None  # empty string clears it
+        try:
+            cfg = cc.set_remote_backend(backend_type, recipient=args.recipient)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        print(f"OK: remote backend set to {cfg['remote_backend']}.")
+        if backend_type == "sops-age" and not args.recipient:
+            print(
+                "NOTE: no --recipient given; sops-age needs an age recipient "
+                "(age1...) to encrypt to before mirroring will work.",
                 file=sys.stderr,
             )
         return 0

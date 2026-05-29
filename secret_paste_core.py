@@ -181,6 +181,26 @@ def set_remote_enabled(enabled: bool) -> dict:
     return cfg
 
 
+def set_remote_backend(backend_type: str | None, **options) -> dict:
+    """Set the remote backend spec in config and persist. Returns the new config.
+
+    ``backend_type=None`` clears the remote backend. Otherwise the config stores
+    a ``{"type": backend_type, **options}`` dict (options with empty values are
+    dropped). The spec is validated via ``configured_remote_backend`` first, so
+    an unknown type raises ``ValueError`` before anything is written.
+    """
+    cfg = load_config()
+    if backend_type is None:
+        cfg["remote_backend"] = None
+    else:
+        spec = {"type": backend_type}
+        spec.update({k: v for k, v in options.items() if v})
+        configured_remote_backend({"remote_backend": spec})  # validate (may raise)
+        cfg["remote_backend"] = spec
+    save_config(cfg)
+    return cfg
+
+
 # --- Vault detection -----------------------------------------------------
 
 # CLI tools we know how to talk to (or plan to). Detection is purely "is the
