@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-05-29
+
+### Changed
+
+- Modern paste dialog: uses **CustomTkinter** when available (dark, brand-styled,
+  native HighDPI) with a DPI- and dark-contrast-fixed stdlib `ttk` fallback.
+  Subtle fade-in on open. Fixes blurry text on HighDPI displays and the
+  low-contrast input field in dark mode.
+
+### Added
+
+- Optional `gui` extra — `pipx install "secret-paste[gui]"` for the modern UI.
+  Zero *required* dependencies preserved (the stdlib fallback always works).
+
 ## [1.0.0] — 2026-05-29
 
 ### Added
@@ -79,5 +93,6 @@ First public release.
 - The "Mirror to remote backend" checkbox in the paste dialog is visible
   but disabled.
 
+[1.1.0]: https://github.com/MoritzV42/secret-paste/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/MoritzV42/secret-paste/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/MoritzV42/secret-paste/releases/tag/v0.1.0
