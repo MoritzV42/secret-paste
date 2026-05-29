@@ -65,17 +65,113 @@ def _font(weight: str = "normal", size: int = 10) -> tuple:
     return (family, size, weight)
 
 
-def _apply_theme(root) -> None:
-    """Pick a per-OS modern ttk theme. Pure stdlib, no extra deps."""
+def _prefers_dark_mode() -> bool:
+    """Best-effort OS dark-mode detection. Pure stdlib, never raises.
+
+    * Windows: ``HKCU\\...\\Themes\\Personalize\\AppsUseLightTheme`` (0 = dark).
+    * macOS: ``defaults read -g AppleInterfaceStyle`` returns ``Dark`` only when
+      dark mode is on (errors out otherwise).
+    * Linux: ``gsettings`` color-scheme / GTK theme name heuristic.
+
+    Returns ``False`` if detection is unavailable or ambiguous (light is the
+    safe default — it matches the legacy look).
+    """
+    try:
+        if sys.platform == "win32":
+            import winreg  # type: ignore
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            try:
+                val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            finally:
+                winreg.CloseKey(key)
+            return val == 0
+
+        if sys.platform == "darwin":
+            import subprocess
+
+            out = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return out.returncode == 0 and "dark" in out.stdout.strip().lower()
+
+        # Linux / other POSIX: best-effort via gsettings.
+        import subprocess
+
+        for schema, key in (
+            ("org.gnome.desktop.interface", "color-scheme"),
+            ("org.gnome.desktop.interface", "gtk-theme"),
+        ):
+            try:
+                out = subprocess.run(
+                    ["gsettings", "get", schema, key],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+            except (FileNotFoundError, OSError):
+                return False
+            if out.returncode == 0 and "dark" in out.stdout.strip().lower():
+                return True
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# Color palettes for the dialog. ttk themes don't expose a portable dark mode,
+# so we drive label / accent colors ourselves and tint the window background.
+_LIGHT_COLORS = {
+    "bg": None,  # None = leave the native window background untouched
+    "header": "#1a1a1a",
+    "hint": "#666666",
+    "muted": "#999999",
+    "backend": "#3a7bd5",
+    "accent_bg": "#3a7bd5",
+    "accent_active": "#2f66b3",
+    "accent_disabled": "#9bb8e0",
+}
+_DARK_COLORS = {
+    "bg": "#1e1e1e",
+    "header": "#f0f0f0",
+    "hint": "#b8b8b8",
+    "muted": "#888888",
+    "backend": "#6aa6f0",
+    "accent_bg": "#4a8be0",
+    "accent_active": "#5a9bf0",
+    "accent_disabled": "#3a4a5e",
+}
+
+
+def _apply_theme(root, dark: bool | None = None) -> dict:
+    """Pick a per-OS ttk theme and apply a light/dark color palette.
+
+    ``dark`` forces the palette; ``None`` auto-detects from the OS. Pure
+    stdlib, no extra deps. Returns the active color dict so callers can tint
+    non-ttk widgets (e.g. an overrideredirect toast) consistently.
+    """
     from tkinter import ttk
+
+    if dark is None:
+        dark = _prefers_dark_mode()
+    colors = _DARK_COLORS if dark else _LIGHT_COLORS
 
     style = ttk.Style(root)
     available = set(style.theme_names())
     preferred = []
     if sys.platform == "darwin":
-        preferred = ["aqua"]
+        # 'aqua' renders its own dark mode natively; for our manual dark palette
+        # 'clam' honors background overrides far better, so prefer it when dark.
+        preferred = ["clam", "aqua"] if dark else ["aqua", "clam"]
     elif sys.platform == "win32":
-        preferred = ["vista", "winnative", "xpnative"]
+        # The native Windows themes ignore background overrides, so for dark we
+        # fall back to 'clam' which actually paints our colors.
+        preferred = ["clam"] if dark else ["vista", "winnative", "xpnative"]
     else:
         preferred = ["clam"]
     for t in preferred:
@@ -85,27 +181,49 @@ def _apply_theme(root) -> None:
                 break
             except Exception:  # noqa: BLE001
                 continue
-    style.configure("Header.TLabel", font=_font("bold", 15))
-    style.configure("Hint.TLabel", foreground="#666", font=_font("normal", 9))
-    style.configure("Muted.TLabel", foreground="#999", font=_font("normal", 8))
-    style.configure("Backend.TLabel", foreground="#3a7bd5", font=_font("normal", 9))
-    # Akzent-Button für die primäre Aktion (OK). Reines ttk, keine Extra-Deps —
-    # nicht jedes Theme ehrt jede Option, deshalb defensiv konfiguriert.
+
+    # Tint the window + ttk surfaces when a dark background is requested.
+    if colors["bg"]:
+        try:
+            root.configure(bg=colors["bg"])
+            style.configure(".", background=colors["bg"], foreground=colors["header"])
+            style.configure("TFrame", background=colors["bg"])
+            style.configure("TLabel", background=colors["bg"])
+            style.configure("TCheckbutton", background=colors["bg"], foreground=colors["hint"])
+            style.map(
+                "TCheckbutton",
+                background=[("active", colors["bg"])],
+            )
+            style.configure("TSeparator", background=colors["bg"])
+        except Exception:  # noqa: BLE001
+            pass
+
+    style.configure("Header.TLabel", font=_font("bold", 15), foreground=colors["header"])
+    style.configure("Hint.TLabel", foreground=colors["hint"], font=_font("normal", 9))
+    style.configure("Muted.TLabel", foreground=colors["muted"], font=_font("normal", 8))
+    style.configure("Backend.TLabel", foreground=colors["backend"], font=_font("normal", 9))
+    # Accent button for the primary action. Pure ttk, no extra deps — not every
+    # theme honors every option, so this is configured defensively.
     try:
         style.configure(
             "Accent.TButton",
             font=_font("bold", 10),
             foreground="#ffffff",
-            background="#3a7bd5",
+            background=colors["accent_bg"],
             padding=(14, 6),
         )
         style.map(
             "Accent.TButton",
-            background=[("active", "#2f66b3"), ("disabled", "#9bb8e0")],
+            background=[
+                ("active", colors["accent_active"]),
+                ("disabled", colors["accent_disabled"]),
+            ],
             foreground=[("disabled", "#eeeeee")],
         )
     except Exception:  # noqa: BLE001
         pass
+
+    return colors
 
 
 def show_dialog(
@@ -149,8 +267,9 @@ def show_dialog(
     persist_var = tk.BooleanVar(value=default_persist)
     vault_var = tk.BooleanVar(value=False)
 
-    # Eingabezeile: Feld + "Paste"-Button nebeneinander. Der Button holt den
-    # Wert aus der Zwischenablage ins Feld — bequem, der Wert landet nie im Chat.
+    # Input row: field + "Paste" button side by side. The button pulls the
+    # value from the clipboard into the field — convenient, and the value still
+    # never touches the chat.
     entry_row = ttk.Frame(outer)
     entry_row.pack(fill="x", pady=(4, 4))
     entry = ttk.Entry(entry_row, textvariable=value_var, show="*")
@@ -160,7 +279,7 @@ def show_dialog(
     def paste_clipboard():
         try:
             clip = root.clipboard_get()
-        except Exception:  # noqa: BLE001  — leere/nicht-text Zwischenablage
+        except Exception:  # noqa: BLE001  — empty / non-text clipboard
             clip = ""
         if clip:
             value_var.set(clip.strip("\r\n"))
@@ -232,8 +351,8 @@ def show_dialog(
     btn_frame = ttk.Frame(outer)
     btn_frame.pack(fill="x", pady=(14, 0))
     ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
-    ok_btn = ttk.Button(btn_frame, text="Speichern", command=on_ok)
-    # Akzent-Stil nur anwenden, wenn das Theme ihn unterstützt — sonst Default.
+    ok_btn = ttk.Button(btn_frame, text="Save", command=on_ok)
+    # Apply the accent style only if the theme supports it — fall back otherwise.
     try:
         ok_btn.configure(style="Accent.TButton")
     except Exception:  # noqa: BLE001
