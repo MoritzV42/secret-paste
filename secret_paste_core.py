@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 from abc import ABC, abstractmethod
@@ -178,6 +179,22 @@ def set_remote_enabled(enabled: bool) -> dict:
     cfg["remote_enabled"] = bool(enabled)
     save_config(cfg)
     return cfg
+
+
+# --- Vault detection -----------------------------------------------------
+
+# CLI tools we know how to talk to (or plan to). Detection is purely "is the
+# binary on PATH" — it does not run the tools or read any vault state.
+KNOWN_VAULT_CLIS: tuple[str, ...] = ("age", "sops", "bw", "op")
+
+
+def detect_vaults() -> list[str]:
+    """Return the subset of KNOWN_VAULT_CLIS that are available on PATH.
+
+    Pure stdlib (``shutil.which``); never runs the binaries. Used to decide
+    whether to offer the remote-mirror option to the user at all.
+    """
+    return [name for name in KNOWN_VAULT_CLIS if shutil.which(name)]
 
 
 # --- Platform-specific value storage --------------------------------------
