@@ -1,7 +1,7 @@
-"""CLI-Verhalten von ``secret-get`` — inkl. der neuen ``--json`` /
-``--print-path`` Ausgabemodi.
+"""CLI behaviour of ``secret-get`` — including the new ``--json`` /
+``--print-path`` output modes.
 
-Der eigentliche Wert landet nie auf stdout — diese Tests pinnen das fest.
+The actual value never reaches stdout — these tests pin that down.
 """
 
 from __future__ import annotations
@@ -16,22 +16,22 @@ import secret_paste_core as core
 
 @pytest.fixture
 def stored_key(isolated_dirs, fake_backend, monkeypatch):
-    """Legt einen Credential an und stellt sicher, dass ein Backend verfügbar ist."""
+    """Store a credential and make sure a backend is available."""
     core.write_credential("BREVO_KEY", "sk-secret-123", ttl_hours=2, persist_to_vault=False)
-    # default_backend() darf in der Test-Umgebung (ohne pywin32/keyring) nicht
-    # hart abbrechen — wir tun so, als sei DPAPI verfügbar.
+    # default_backend() must not hard-fail in the test environment (no
+    # pywin32/keyring) — pretend DPAPI is available.
     monkeypatch.setattr(cli.cc, "default_backend", lambda: core.LocalDPAPIBackend())
     return "BREVO_KEY"
 
 
 def test_default_output_unchanged(stored_key, capsys):
-    """Ohne Flags bleibt die ``OK:``-Zeile exakt wie vorher (stabiler Vertrag)."""
+    """Without flags the ``OK:`` line stays exactly as before (stable contract)."""
     rc = cli.main([stored_key])
     out = capsys.readouterr().out
     assert rc == 0
     assert out.startswith(f"OK: {stored_key} available at ")
     assert "min TTL, source=" in out
-    # Wert taucht nie auf stdout auf.
+    # The value never appears on stdout.
     assert "sk-secret-123" not in out
 
 
@@ -39,12 +39,12 @@ def test_print_path_outputs_only_path(stored_key, capsys):
     rc = cli.main([stored_key, "--print-path"])
     out = capsys.readouterr().out.strip()
     assert rc == 0
-    # Genau eine Zeile, die auf den Temp-Pfad zeigt — kein "OK:" davor.
+    # Exactly one line pointing at the temp path — no "OK:" prefix.
     assert "\n" not in out
     assert out.endswith("BREVO_KEY.val")
     assert not out.startswith("OK:")
     assert "sk-secret-123" not in out
-    # Der ausgegebene Pfad existiert und enthält den Wert (Datei, nicht stdout).
+    # The printed path exists and holds the value (file, not stdout).
     from pathlib import Path
 
     assert Path(out).read_text(encoding="utf-8") == "sk-secret-123"
@@ -58,10 +58,10 @@ def test_json_output_shape(stored_key, capsys):
     assert set(payload) == {"name", "path", "ttl_remaining"}
     assert payload["name"] == "BREVO_KEY"
     assert payload["path"].endswith("BREVO_KEY.val")
-    # ttl_remaining ist eine ganze Sekundenzahl knapp unter dem 5-Min-Fenster.
+    # ttl_remaining is a whole-second count just below the 5-minute window.
     assert isinstance(payload["ttl_remaining"], int)
     assert 0 < payload["ttl_remaining"] <= core.TMP_TTL_MINUTES * 60
-    # Wert ist nie Teil des JSON.
+    # The value is never part of the JSON.
     assert "sk-secret-123" not in out
 
 
@@ -82,5 +82,5 @@ def test_missing_key_returns_2_in_json_mode(isolated_dirs, fake_backend, monkeyp
     rc = cli.main(["NOPE", "--json"])
     out = capsys.readouterr().out
     assert rc == 2
-    # Kein halbes JSON auf stdout, wenn der Key fehlt.
+    # No half-written JSON on stdout when the key is missing.
     assert out.strip() == ""

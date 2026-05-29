@@ -473,12 +473,12 @@ def write_tmp_value(name: str, value: str) -> Path:
 
 
 def tmp_ttl_remaining(name: str) -> int | None:
-    """Verbleibende Lebensdauer der Temp-Datei in ganzen Sekunden.
+    """Remaining lifetime of the temp file in whole seconds.
 
-    Liest den Ablauf-Marker (``<name>.val.expires``) und gibt die Differenz zu
-    ``jetzt`` zurück. Nie negativ — eine bereits abgelaufene (aber noch nicht
-    aufgeräumte) Datei liefert ``0``. Gibt ``None`` zurück, wenn kein Marker
-    existiert oder dessen Inhalt nicht als Zeitstempel lesbar ist.
+    Reads the expiry marker (``<name>.val.expires``) and returns the difference
+    to ``now``. Never negative — an already-expired (but not yet cleaned up)
+    file returns ``0``. Returns ``None`` when no marker exists or its content
+    is not a readable timestamp.
     """
     marker = tmp_val_path(name).with_suffix(".val.expires")
     if not marker.exists():
