@@ -132,6 +132,54 @@ def _safe_name(name: str) -> str:
     return cleaned
 
 
+# --- Config layer --------------------------------------------------------
+
+# Default config: remote mirroring is OFF until the user opts in. A None
+# backend means "no remote backend configured yet" even when remote_enabled.
+CONFIG_DEFAULTS: dict = {
+    "remote_enabled": False,
+    "remote_backend": None,
+}
+
+
+def config_path() -> Path:
+    return store_dir() / "config.json"
+
+
+def load_config() -> dict:
+    """Load config, merged over defaults. Robust against a missing/corrupt file.
+
+    A missing or unparseable ``config.json`` yields a copy of CONFIG_DEFAULTS
+    instead of raising — the tool must keep working with safe defaults even if
+    the file was hand-edited into invalid JSON.
+    """
+    cfg = dict(CONFIG_DEFAULTS)
+    cp = config_path()
+    if not cp.exists():
+        return cfg
+    try:
+        data = json.loads(cp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — corrupt JSON, unreadable file, etc.
+        return cfg
+    if isinstance(data, dict):
+        cfg.update({k: data[k] for k in CONFIG_DEFAULTS if k in data})
+    return cfg
+
+
+def save_config(cfg: dict) -> None:
+    """Persist config. Only known keys are written; unknown keys are dropped."""
+    out = {k: cfg.get(k, CONFIG_DEFAULTS[k]) for k in CONFIG_DEFAULTS}
+    config_path().write_text(json.dumps(out, indent=2), encoding="utf-8")
+
+
+def set_remote_enabled(enabled: bool) -> dict:
+    """Toggle the ``remote_enabled`` flag and persist. Returns the new config."""
+    cfg = load_config()
+    cfg["remote_enabled"] = bool(enabled)
+    save_config(cfg)
+    return cfg
+
+
 # --- Platform-specific value storage --------------------------------------
 
 
