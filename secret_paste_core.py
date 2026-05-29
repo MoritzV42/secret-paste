@@ -650,8 +650,106 @@ def default_backend() -> VaultBackend:
     )
 
 
+# --- Remote backends -----------------------------------------------------
+
+
+def remote_dir() -> Path:
+    """Directory holding age-encrypted remote-mirror entries."""
+    p = store_dir() / "remote"
+    p.mkdir(parents=True, exist_ok=True)
+    if os.name == "posix":
+        try:
+            os.chmod(p, 0o700)
+        except OSError:
+            pass
+    return p
+
+
+class SopsAgeBackend(VaultBackend):
+    """Write-only, file-based remote mirror using the ``age`` CLI (skeleton).
+
+    Each ``put`` writes one age-encrypted file under ``store_dir()/remote/``.
+    This is intentionally a skeleton: it implements ``put`` (real age
+    encryption) and declares itself write-only — ``get`` is not supported, so
+    the credential is mirrored out but never read back through this backend.
+    A full sops-managed, syncable remote is future work (see ROADMAP.md).
+
+    The backend needs an age recipient (public key, ``age1...``) to encrypt to.
+    If ``age`` is not on PATH, or no recipient is configured, ``put`` raises a
+    clear error rather than crashing or silently dropping the value.
+    """
+
+    name = "sops-age"
+    supports_read = False
+
+    def __init__(self, recipient: str | None = None):
+        self.recipient = recipient
+
+    def _entry_path(self, name: str) -> Path:
+        return remote_dir() / f"{_safe_name(name)}.age"
+
+    def put(
+        self,
+        name: str,
+        value: str,
+        ttl_hours: int | None = None,
+        persist_to_vault: bool = False,
+    ) -> None:
+        import subprocess
+
+        if not self.recipient:
+            raise RuntimeError(
+                "sops-age backend has no recipient configured. Set an age "
+                "recipient (public key 'age1...') before mirroring."
+            )
+        age_bin = shutil.which("age")
+        if age_bin is None:
+            raise RuntimeError(
+                "The 'age' CLI was not found on PATH. Install age "
+                "(https://github.com/FiloSottile/age) to use the sops-age backend."
+            )
+        out_path = self._entry_path(name)
+        try:
+            # Encrypt stdin -> file. The plaintext is passed via stdin, never
+            # as an argument, so it does not appear in the process table.
+            subprocess.run(
+                [age_bin, "--encrypt", "--recipient", self.recipient, "--output", str(out_path)],
+                input=value.encode("utf-8"),
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(f"age encryption failed: {stderr or exc}") from exc
+        if os.name == "posix":
+            try:
+                os.chmod(out_path, 0o600)
+            except OSError:
+                pass
+
+    def get(self, name: str) -> str | None:
+        raise NotImplementedError(
+            "sops-age is a write-only backend; reads must come from the local store."
+        )
+
+    def delete(self, name: str) -> bool:
+        p = self._entry_path(name)
+        if p.exists():
+            try:
+                p.unlink()
+                return True
+            except OSError:
+                return False
+        return False
+
+    def list(self) -> list[CredMeta]:
+        items: list[CredMeta] = []
+        for f in sorted(remote_dir().glob("*.age")):
+            items.append(CredMeta(name=f.stem, source=self.name))
+        return items
+
+
 # Stubs for future remote/portable backends — see ROADMAP.md:
 #
 # class BitwardenBackend(VaultBackend):   # bw CLI
 # class OnePasswordBackend(VaultBackend): # op CLI
-# class SopsAgeBackend(VaultBackend):     # sops + age, file-based

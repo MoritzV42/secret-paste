@@ -108,6 +108,49 @@ def test_backend_get_helper_refuses_write_only_backend():
         core.backend_get(wo, "ZETA")
 
 
+def test_sops_age_is_write_only():
+    assert core.SopsAgeBackend().supports_read is False
+
+
+def test_sops_age_get_raises_not_implemented():
+    with pytest.raises(NotImplementedError):
+        core.SopsAgeBackend(recipient="age1xxx").get("ANY")
+
+
+def test_sops_age_put_without_recipient_raises(isolated_dirs):
+    with pytest.raises(RuntimeError, match="recipient"):
+        core.SopsAgeBackend().put("ANY", "v")
+
+
+def test_sops_age_put_without_age_binary_raises(isolated_dirs, monkeypatch):
+    monkeypatch.setattr(core.shutil, "which", lambda _name: None)
+    with pytest.raises(RuntimeError, match="age"):
+        core.SopsAgeBackend(recipient="age1xxx").put("ANY", "v")
+
+
+def test_sops_age_put_writes_entry(isolated_dirs, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(core.shutil, "which", lambda _name: "/usr/bin/age")
+
+    def fake_run(cmd, **kwargs):
+        # cmd = [age, --encrypt, --recipient, R, --output, PATH]
+        out_path = cmd[cmd.index("--output") + 1]
+        # Simulate age writing an (opaque) ciphertext file.
+        with open(out_path, "wb") as fh:
+            fh.write(b"age-encrypted-blob")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    be = core.SopsAgeBackend(recipient="age1xxx")
+    be.put("REMOTE_KEY", "plaintext")
+    entries = {cm.name for cm in be.list()}
+    assert "REMOTE_KEY" in entries
+    # The value is encrypted, not stored in cleartext.
+    blob = (core.remote_dir() / "REMOTE_KEY.age").read_bytes()
+    assert b"plaintext" not in blob
+
+
 def test_backend_label_reports_active_platform(monkeypatch):
     import sys
 
