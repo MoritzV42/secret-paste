@@ -645,9 +645,7 @@ def _show_dialog_ctk(
         border_color=BRAND["line"],
     ).pack(side="left", padx=(10, 0))
 
-    err_lbl = ctk.CTkLabel(
-        outer, text="", font=f_small, text_color="#f87171", anchor="w"
-    )
+    err_lbl = ctk.CTkLabel(outer, text="", font=f_small, text_color="#f87171", anchor="w")
     err_lbl.pack(anchor="w", fill="x", pady=(4, 0))
 
     def toggle_show():
