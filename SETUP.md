@@ -15,43 +15,68 @@ hand it to your agent, and the agent does the work.
 Copy the whole block and paste it into your agent:
 
 ```text
-Please install and set up the "secret-paste" tool for me. Work step by step and
-explain what you do.
+Please install and set up the "secret-paste" tool on my machine. Work step by
+step, explain each step, and ASK me whenever a decision is mine. Do NOT assume my
+operating system — detect it. If you already know my OS from prior context, say
+so and still verify it.
 
-1. Detect my OS and check that Python 3.10+ and pipx are available. If pipx is
-   missing, install it (python -m pip install --user pipx && python -m pipx
-   ensurepath) and tell me to reopen the shell if PATH changed.
-2. Install the tool:  pipx install secret-paste
-3. Verify it: run  secret-get --help  and  secret-paste --show-config  and show
-   me the output.
-4. Check whether I already have a local secret manager on PATH by running:
-       secret-paste --show-config
-   It prints "detected vault CLIs". The tool understands: age, sops, bw
-   (Bitwarden), op (1Password).
-5. IF at least one vault CLI was detected, ASK me (do NOT decide for me) whether
-   I want to enable the OPTIONAL write-only remote mirror. Explain clearly and
-   honestly before I answer:
-     - Everything stays LOCAL on my machine. Nothing is uploaded anywhere and
-       the tool's author receives nothing.
-     - The mirror is WRITE-ONLY: secret-paste can only write into the vault,
-       never read back from it. My AI agent keeps reading secrets only from the
-       short-lived local temp file, exactly as without the mirror.
-     - It is fully optional and can be turned off again at any time.
-   IF I say yes and "age" is available, ask me for my age recipient (public key,
-   starts with "age1...") and run:
+WHAT THIS TOOL DOES (context for you):
+secret-paste lets me hand you a secret (API key, token, password) WITHOUT the
+value ever appearing in our chat. I paste it into a small local GUI dialog; you
+later retrieve it with `secret-get`, which writes it to a short-lived temp file
+and never prints the value. Repo: https://github.com/MoritzV42/secret-paste
+
+1. DETECT ENVIRONMENT — report before changing anything:
+   - OS (Windows / macOS / Linux) + architecture.
+   - Python >= 3.10  (`python3 --version` or `python --version`).
+   - pipx            (`pipx --version`).
+   - GUI toolkit     (`python3 -c "import tkinter"`) — REQUIRED even for the
+     plain fallback dialog. On macOS the system Python often lacks it.
+
+2. INSTALL ONLY WHAT IS MISSING (per OS):
+   - Windows: Python via `winget install Python.Python.3.12`; pipx via
+     `python -m pip install --user pipx; python -m pipx ensurepath`.
+     (tkinter ships with the winget/python.org build.)
+   - macOS: `brew install python python-tk pipx` then `pipx ensurepath`.
+     python-tk is REQUIRED or the dialog will not open.
+   - Linux: install python3 + python3-pip + pipx via the distro manager and
+     `sudo apt install python3-tk` (or the distro equivalent) for the GUI;
+     `pipx ensurepath`. The keyring backend needs a running Secret Service
+     (GNOME Keyring / KWallet) in a headed session.
+   - If PATH changed after `ensurepath`, tell me to reopen the shell, then continue.
+
+3. INSTALL THE TOOL (from GitHub — it is not on PyPI):
+       pipx install "secret-paste[gui] @ git+https://github.com/MoritzV42/secret-paste"
+   The [gui] extra pulls CustomTkinter for the modern dark dialog; without it a
+   plain-Tk fallback is used.
+
+4. VERIFY:
+   - `secret-get --help` prints usage.
+   - `secret-paste --show-config` prints remote_enabled / backend (expect remote
+     OFF by default).
+   - GUI smoke test: run `secret-paste TEST_KEY`; I paste a throwaway value + OK.
+     Then `secret-list` must show TEST_KEY with its backend (dpapi on Windows,
+     keyring on macOS/Linux) and a TTL. Then `secret-revoke TEST_KEY`.
+   - Tell me the detected backend and CONFIRM the value never appeared in chat.
+
+5. OPTIONAL WRITE-ONLY REMOTE MIRROR — ASK me first, do NOT decide:
+   `secret-paste --show-config` lists "detected vault CLIs" (age, sops, bw, op).
+   Explain honestly: everything stays local; the mirror is WRITE-ONLY (secret-get
+   never reads from it); fully optional; off by default; nothing goes to the
+   author or any third party. IF I say yes and `age` is present, ask for my age
+   recipient (`age1...`) and run:
        secret-paste --set-remote sops-age --recipient age1...
        secret-paste --enable-remote
-   IF I say no, or no vault CLI was detected, do nothing here — the mirror option
-   simply stays hidden and uninstalled. Do not nag me about it.
-6. Show me the basic usage:
-     - Store a secret:        secret-paste BREVO_KEY
-       (a small GUI dialog opens; I paste the value there, it never touches the
-       chat transcript)
-     - Use it in a command:   secret-get BREVO_KEY --print-path
-       (prints the path to a temp file that holds the value for ~5 minutes;
-       read the file, never echo the value)
-     - Machine-readable:      secret-get BREVO_KEY --json
-7. Confirm everything works and summarise what you configured.
+   IF I say no or no CLI is detected: do nothing, don't nag.
+
+6. OPTIONAL AGENT SKILL — ASK me first:
+   Offer to install the bundled skill so future chats auto-trigger secret-paste
+   when a secret is needed: run `secret-paste-install-skill` and tell me where it
+   landed.
+
+7. SUMMARISE: OS, Python/pipx versions, install path, detected backend, whether
+   the mirror + skill were configured, and the one command I run next time I want
+   to hand you a secret:  secret-paste <NAME>
 ```
 
 ---
@@ -59,10 +84,13 @@ explain what you do.
 ## 2. Manual install (no AI agent)
 
 ```bash
-pipx install secret-paste     # or: pip install --user secret-paste
+# Not on PyPI yet — install from GitHub:
+pipx install "secret-paste[gui] @ git+https://github.com/MoritzV42/secret-paste"
 secret-get --help
 secret-paste --show-config
 ```
+
+macOS needs Tk for the dialog: `brew install python-tk`. Debian/Ubuntu: `sudo apt install python3-tk`.
 
 Store and use a secret:
 
