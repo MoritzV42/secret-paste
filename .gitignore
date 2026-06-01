@@ -32,3 +32,6 @@ desktop.ini
 .env
 .env.local
 *.local
+
+# Local-only Claude context (never commit)
+CLAUDE.local.md
