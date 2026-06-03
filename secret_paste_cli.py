@@ -351,6 +351,37 @@ def _fade_in(window, *, duration_ms: int = 150, steps: int = 12) -> None:
     window.after(delay, step, 1)
 
 
+def _safe_destroy(window) -> None:
+    """Tear a Tk/CustomTkinter window down without the noisy
+    ``invalid command name "..._check_dpi_scaling"`` Tcl errors.
+
+    CustomTkinter schedules internal ``after`` callbacks (DPI scaling polling,
+    button hover/click animations, geometry updates). Calling ``destroy()``
+    directly while those are still queued makes them fire against an
+    already-destroyed widget → Tcl raises ``invalid command name`` to stderr.
+    We first cancel every pending ``after`` callback, then ``quit()`` the
+    mainloop, then ``destroy()`` — each step fully defensive.
+    """
+    try:
+        pending = window.tk.call("after", "info")
+        ids = window.tk.splitlist(pending) if pending else ()
+        for after_id in ids:
+            try:
+                window.after_cancel(after_id)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        window.quit()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        window.destroy()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def show_dialog(
     key_name: str,
     description: str,
@@ -502,11 +533,11 @@ def _show_dialog_ttk(
         result["value"] = value_var.get()
         result["vault"] = vault_var.get()
         result["persist"] = persist_var.get()
-        root.destroy()
+        _safe_destroy(root)
 
     def on_cancel(event=None):
         result["ok"] = False
-        root.destroy()
+        _safe_destroy(root)
 
     btn_frame = ttk.Frame(outer)
     btn_frame.pack(fill="x", pady=(14, 0))
@@ -729,11 +760,11 @@ def _show_dialog_ctk(
         result["value"] = value_var.get()
         result["vault"] = vault_var.get()
         result["persist"] = persist_var.get()
-        root.destroy()
+        _safe_destroy(root)
 
     def on_cancel(event=None):
         result["ok"] = False
-        root.destroy()
+        _safe_destroy(root)
 
     btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
     btn_frame.pack(fill="x", side="bottom", pady=(16, 0))
@@ -818,7 +849,7 @@ def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
     w = root.winfo_width()
     sw = root.winfo_screenwidth()
     root.geometry(f"+{sw - w - 24}+{24}")
-    root.after(1800, root.destroy)
+    root.after(1800, lambda: _safe_destroy(root))
     try:
         root.mainloop()
     except Exception:  # noqa: BLE001

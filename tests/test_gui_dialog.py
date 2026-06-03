@@ -158,3 +158,61 @@ def test_ctk_dialog_builds_with_mirror_checkbox(monkeypatch):
     monkeypatch.setattr(core, "detect_vaults", lambda: ["age", "sops"])
     result = _build_and_teardown(cli._show_dialog_ctk, monkeypatch)
     assert result == (False, "", False, False)
+
+
+class _FakeWindow:
+    """Minimal stand-in for a Tk/CTk window to test _safe_destroy ordering."""
+
+    def __init__(self, pending=("after#0", "after#1"), fail_on=None):
+        self._pending = list(pending)
+        self._fail_on = fail_on or set()
+        self.calls = []
+
+        class _Tk:
+            def __init__(self, outer):
+                self._outer = outer
+
+            def call(self, *args):
+                self._outer.calls.append(("call", args))
+                if "info" in args:
+                    return " ".join(self._outer._pending)
+                return ""
+
+            def splitlist(self, s):
+                return tuple(s.split()) if s else ()
+
+        self.tk = _Tk(self)
+
+    def after_cancel(self, after_id):
+        self.calls.append(("after_cancel", after_id))
+        if "after_cancel" in self._fail_on:
+            raise RuntimeError("boom")
+
+    def quit(self):
+        self.calls.append(("quit",))
+        if "quit" in self._fail_on:
+            raise RuntimeError("boom")
+
+    def destroy(self):
+        self.calls.append(("destroy",))
+        if "destroy" in self._fail_on:
+            raise RuntimeError("boom")
+
+
+def test_safe_destroy_cancels_pending_then_quits_then_destroys():
+    win = _FakeWindow(pending=("after#0", "after#1"))
+    cli._safe_destroy(win)
+    kinds = [c[0] for c in win.calls]
+    # Beide pending-Callbacks gecancelt
+    assert win.calls.count(("after_cancel", "after#0")) == 1
+    assert win.calls.count(("after_cancel", "after#1")) == 1
+    # Reihenfolge: erst alle after_cancel, dann quit, dann destroy
+    assert kinds.index("quit") < kinds.index("destroy")
+    assert kinds.index("after_cancel") < kinds.index("quit")
+
+
+def test_safe_destroy_is_fully_defensive():
+    # Selbst wenn after_cancel UND quit werfen, muss destroy trotzdem laufen.
+    win = _FakeWindow(fail_on={"after_cancel", "quit"})
+    cli._safe_destroy(win)  # darf NICHT werfen
+    assert ("destroy",) in win.calls
