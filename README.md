@@ -1,13 +1,16 @@
 # secret-paste
 
-> Give AI agents secrets without leaking them into your chat transcript.
+Ever pasted an API key into an AI chat and instantly regretted it? Once a
+token is in the transcript of Claude / Cursor / ChatGPT / your CLI agent, it's
+there for good — replayed on every retry, kept in whatever logs the provider
+stores, visible to anyone who later loads the session. The only real fix is
+revoke + rotate, every single time.
 
-When you paste a token into Claude / Cursor / ChatGPT / your CLI agent, it
-lives in the conversation forever — replayed on every retry, indexed in any
-logs the provider keeps, visible to anyone who later loads the session.
-`secret-paste` fixes this with the smallest possible primitive: a **local GUI
-dialog** the agent asks you to open, plus a **5-minute-TTL temp file** the
-agent reads from. The value never touches the chat.
+`secret-paste` keeps the value out of the chat entirely: you paste it once
+into a **local GUI dialog**, it's stored encrypted in your OS keyring
+(Windows DPAPI / macOS Keychain / Linux libsecret), and the agent retrieves
+it by name from a **5-minute-TTL temp file**. The transcript only ever
+contains a file path — never the value.
 
 ```text
 +----------------- Agent says -------------------------+
@@ -31,8 +34,8 @@ agent reads from. The value never touches the chat.
       (5min TTL, source=Windows DPAPI)
 ```
 
-The agent now has a **file path**, not a value, in its transcript. It reads
-the file, uses the credential, and 5 minutes later the file is auto-deleted.
+The agent reads the file, uses the credential, and 5 minutes later the file
+is auto-deleted.
 
 ## Install
 
