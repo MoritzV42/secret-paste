@@ -49,3 +49,14 @@ def test_enable_remote_warns_when_no_vault_detected(isolated_dirs, monkeypatch, 
     rc = cli.main(["--enable-remote"])
     assert rc == 0
     assert "no supported vault CLI" in capsys.readouterr().err
+
+
+def test_share_flag_exits_cleanly_not_implemented(isolated_dirs, capsys):
+    # The one-time-sharing flag is a placeholder: it must exit 0, print the
+    # "not yet implemented" notice, and never open the dialog. See
+    # docs/one-time-sharing.md.
+    rc = cli.main(["--share", "SOME_KEY"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "not yet implemented" in err
+    assert "docs/one-time-sharing.md" in err
