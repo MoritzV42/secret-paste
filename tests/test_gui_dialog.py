@@ -216,3 +216,111 @@ def test_safe_destroy_is_fully_defensive():
     win = _FakeWindow(fail_on={"after_cancel", "quit"})
     cli._safe_destroy(win)  # darf NICHT werfen
     assert ("destroy",) in win.calls
+
+
+# --- Tooltip helper ---------------------------------------------------------
+
+
+class _FakeWidget:
+    """Minimal stand-in for a tk/CTk widget to test _Tooltip scheduling logic.
+
+    Records ``bind`` / ``after`` / ``after_cancel`` calls so the delay/teardown
+    bookkeeping can be asserted without a visible window or a running mainloop.
+    """
+
+    def __init__(self, raise_on_bind=False):
+        self._raise_on_bind = raise_on_bind
+        self.binds = {}
+        self.scheduled = []  # (delay_ms, callback)
+        self.cancelled = []
+        self._next_id = 0
+
+    def bind(self, sequence, func, add=None):
+        if self._raise_on_bind:
+            raise RuntimeError("simulated bind failure")
+        self.binds.setdefault(sequence, []).append(func)
+
+    def after(self, delay_ms, callback):
+        self._next_id += 1
+        after_id = f"after#{self._next_id}"
+        self.scheduled.append((after_id, delay_ms, callback))
+        return after_id
+
+    def after_cancel(self, after_id):
+        self.cancelled.append(after_id)
+
+
+def test_attach_tooltip_returns_none_without_widget_or_text():
+    assert cli._attach_tooltip(None, "x") is None
+    assert cli._attach_tooltip(_FakeWidget(), "") is None
+
+
+def test_tooltip_binds_enter_leave_and_buttonpress():
+    w = _FakeWidget()
+    tip = cli._attach_tooltip(w, "hello", delay_ms=500)
+    assert tip is not None
+    # All three hover/dismiss events are wired up.
+    assert "<Enter>" in w.binds
+    assert "<Leave>" in w.binds
+    assert "<ButtonPress>" in w.binds
+
+
+def test_tooltip_schedules_show_with_delay_and_cancels_on_hide():
+    w = _FakeWidget()
+    tip = cli._Tooltip(w, "hello", delay_ms=500)
+
+    # Enter -> a single delayed show is scheduled with the configured delay.
+    tip._schedule()
+    assert len(w.scheduled) == 1
+    after_id, delay_ms, _cb = w.scheduled[0]
+    assert delay_ms == 500
+    assert tip._after_id == after_id
+
+    # A second enter before show fires cancels the first pending callback.
+    tip._schedule()
+    assert after_id in w.cancelled
+    assert tip._after_id == w.scheduled[-1][0]
+
+    # Leave cancels the pending show and clears the bookkeeping.
+    tip._hide()
+    assert tip._after_id is None
+    assert w.scheduled[-1][0] in w.cancelled
+
+
+def test_tooltip_never_raises_when_binding_fails():
+    # A widget whose bind() raises must not propagate — dialog stays alive.
+    w = _FakeWidget(raise_on_bind=True)
+    tip = cli._attach_tooltip(w, "hello")  # must not raise
+    assert tip is not None
+
+
+def test_tooltip_show_hide_under_withdrawn_root():
+    """Construct + show + hide a real tooltip under a hidden root, no mainloop."""
+    import tkinter as tk
+
+    try:
+        root = tk.Tk()
+    except Exception as exc:  # noqa: BLE001 — headless CI without a display
+        pytest.skip(f"no GUI environment available: {exc!r}")
+    root.withdraw()
+    try:
+        frame = tk.Frame(root)
+        tip = cli._Tooltip(frame, "tooltip text", delay_ms=10)
+        # Directly trigger show (bypassing the 'after' delay) and verify teardown.
+        tip._show()
+        assert tip._tip is not None
+        tip._hide()
+        assert tip._tip is None
+        # Hiding again is a harmless no-op.
+        tip._hide()
+    finally:
+        cli._safe_destroy(root)
+
+
+def test_tooltip_texts_match_issue_spec():
+    # Guards against accidental copy drift in the shared tooltip text table.
+    assert cli.TOOLTIP_TEXTS["persist"] == "No automatic expiry. Default is 24h TTL."
+    assert cli.TOOLTIP_TEXTS["value"] == "Paste once. Hidden after submit, never logged."
+    assert "encrypted copy" in cli.TOOLTIP_TEXTS["mirror"]
+    assert "secret-get <NAME>" in cli.TOOLTIP_TEXTS["header"]
+    assert cli.TOOLTIP_TEXTS["description"].startswith("Optional human-readable context")

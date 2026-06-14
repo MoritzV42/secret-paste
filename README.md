@@ -24,6 +24,7 @@ contains a file path — never the value.
 | Enter credential: BREVO_KEY                          |
 | [ ******************************************** ]    |
 | [ ] Show value                                       |
+| [ ] Store permanently (no local TTL)                 |
 | Backend: Windows DPAPI                               |
 |                                  [ Cancel ]  [ OK ]  |
 +------------------------------------------------------+
@@ -36,6 +37,12 @@ contains a file path — never the value.
 
 The agent reads the file, uses the credential, and 5 minutes later the file
 is auto-deleted.
+
+Hovering any option in the dialog shows a short **tooltip** explaining what it
+does — e.g. _"Store permanently"_ reminds you that the default is a 24h TTL,
+and the value field notes that the secret is hidden after submit and never
+logged. Tooltips work in both the modern CustomTkinter UI and the stdlib
+fallback, with no extra dependency.
 
 ## Install
 
