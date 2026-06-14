@@ -1,0 +1,14 @@
+{
+  "header": "Zugangsdaten eingeben: {key}",
+  "paste_hint": "Wert einfügen (Strg+V unter Win/Linux, ⌘V unter macOS). Lokal auf diesem Gerät gespeichert.",
+  "paste_button": "Einfügen",
+  "show_value": "Wert anzeigen",
+  "mirror_remote": "Zusätzlich an Remote-Backend spiegeln",
+  "detected_vaults": "Erkannt: {vaults}. Siehe ROADMAP.md.",
+  "store_permanently": "Dauerhaft speichern (kein lokales TTL)",
+  "backend": "Backend: {label}",
+  "save": "Speichern",
+  "cancel": "Abbrechen",
+  "error_empty": "Bitte einen Wert eingeben.",
+  "toast_stored": "[OK] Gespeichert: {key}"
+}

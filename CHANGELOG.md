@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **i18n: German/English dialog (#3).** The paste dialog now has a compact
+  `EN / DE` toggle (top-right) that re-translates every string **live**, without
+  a restart. English stays the default for OSS adoption; a German system locale
+  (`de_*`) opens in German on first run. The choice is persisted to
+  `config.json` (`locale` key) and reused across sessions.
+- CLI flag `--lang=de|en` to force the dialog language for a single run
+  (overrides the persisted/auto locale).
+- Translations as JSON files in `locales/` (`en.json`, `de.json`) with a loader
+  (`secret_paste_i18n`) that falls back to English **per key** for any missing
+  string — adding a language is a pure data change (drop `locales/<code>.json`).
+  See the README "Language (i18n)" section.
+
+### Changed
+
+- **CLI / log output stays English** even in German UI mode (technical logs are
+  easier to grep / paste into issues). Only the GUI is localized.
+
 ## [1.1.0] — 2026-05-29
 
 ### Changed
