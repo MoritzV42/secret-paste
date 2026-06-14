@@ -115,6 +115,45 @@ secret-list                                 # names + meta, NEVER values
 secret-revoke BREVO_KEY                     # delete locally
 ```
 
+## Language (i18n)
+
+The dialog ships **English by default** (international OSS audience). DACH users
+can switch the dialog to **German**:
+
+- **In the dialog**: a compact `EN / DE` toggle sits top-right. Clicking it
+  re-translates every string **live** — no restart. Your choice is **persisted**
+  to `config.json` and reused next time.
+- **First run**: the default is **system-locale-aware** — a German Windows /
+  macOS / Linux (`de_*`) opens in German, everything else in English.
+- **CLI flag**: `secret-paste BREVO_KEY --lang=de` (or `--lang=en`) forces the
+  language for that one run, overriding the persisted/auto choice.
+
+```bash
+secret-paste BREVO_KEY --lang=de            # German dialog this run
+secret-paste BREVO_KEY --lang=en            # English dialog this run
+secret-paste --show-config                  # shows the persisted `locale`
+```
+
+> **CLI / log output stays English on purpose.** Technical logs, warnings and
+> `OK:` lines are easier to grep, diff and paste into GitHub issues when they are
+> always English, regardless of the UI language. Only the *GUI* is translated.
+
+### Add another language
+
+Translations are plain JSON files in [`locales/`](locales/) — adding a language
+is a **pure data change, no code edit**:
+
+1. Copy [`locales/en.json`](locales/en.json) to `locales/<code>.json` (e.g.
+   `locales/fr.json`).
+2. Translate the string values. Keep the keys and any `{key}` / `{label}` /
+   `{vaults}` placeholders intact.
+3. Missing keys fall back to English **per key**, so a partial translation is
+   safe — it never shows blank labels.
+
+PRs adding a language are very welcome. The DE/EN toggle currently advertises the
+two shipped languages; wiring a new code into the toggle/`--lang` choices is a
+one-line follow-up.
+
 ## Claude-Code integration
 
 If you use [Claude Code](https://claude.com/claude-code), the package ships

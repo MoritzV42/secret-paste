@@ -63,22 +63,22 @@ def test_show_dialog_falls_back_when_customtkinter_missing(monkeypatch, no_vault
 
     called = {}
 
-    def fake_ttk(key_name, description, default_persist, backend_label):
-        called["args"] = (key_name, description, default_persist, backend_label)
+    def fake_ttk(key_name, description, default_persist, backend_label, lang=None):
+        called["args"] = (key_name, description, default_persist, backend_label, lang)
         return (True, "from-ttk", False, True)
 
     monkeypatch.setattr(cli, "_show_dialog_ttk", fake_ttk)
 
-    result = cli.show_dialog("DEMO", "desc", False, "Windows DPAPI")
+    result = cli.show_dialog("DEMO", "desc", False, "Windows DPAPI", lang="en")
     assert result == (True, "from-ttk", False, True)
-    assert called["args"] == ("DEMO", "desc", False, "Windows DPAPI")
+    assert called["args"] == ("DEMO", "desc", False, "Windows DPAPI", "en")
 
 
 def test_show_dialog_uses_ctk_when_available(monkeypatch, no_vault_config):
     """If ``customtkinter`` imports, show_dialog routes to the CTk path."""
     pytest.importorskip("customtkinter")
 
-    def fake_ctk(key_name, description, default_persist, backend_label):
+    def fake_ctk(key_name, description, default_persist, backend_label, lang=None):
         return (True, "from-ctk", True, False)
 
     monkeypatch.setattr(cli, "_show_dialog_ctk", fake_ctk)
