@@ -24,7 +24,10 @@ Tracked work for secret-paste.
 - **One-time secret sharing** (server-backed): upload a secret, share a
   single-view link that self-destructs after the first view. Needs an
   encrypting server backend so it stays trustworthy. Lets users *send* secrets,
-  not just store them locally.
+  not just store them locally. Design concept + zero-knowledge threat model +
+  open decisions: [`docs/one-time-sharing.md`](docs/one-time-sharing.md). A
+  non-functional `ShareBackend` skeleton + a placeholder `--share` flag are in
+  place; the server approach is still an open decision before implementation.
 - Animated demo GIF in the README
 - macOS / Linux human-tested confirmation (looking for testers)
 - sops/age round-trip hardening + recipient provisioning in the GUI

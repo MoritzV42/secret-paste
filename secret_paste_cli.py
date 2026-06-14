@@ -90,6 +90,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="age recipient (public key, age1...) used with --set-remote sops-age.",
     )
     p.add_argument(
+        "--share",
+        action="store_true",
+        help=(
+            "[PLANNED] Create a one-time, self-destructing share link for a "
+            "secret instead of storing it locally. Not implemented yet — prints "
+            "a notice and exits. See docs/one-time-sharing.md."
+        ),
+    )
+    p.add_argument(
         "--ttl",
         type=int,
         default=24,
@@ -897,6 +906,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.show_config:
         _print_config()
+        return 0
+
+    # One-time sharing is a design concept, not a built feature yet. The flag
+    # exists so the UX is reserved and discoverable, but it exits cleanly with a
+    # pointer to the design doc rather than half-doing anything. See
+    # docs/one-time-sharing.md (the server approach is an open decision).
+    if args.share:
+        print(
+            "secret-paste --share is not yet implemented — "
+            "see docs/one-time-sharing.md for the design + open decisions.",
+            file=sys.stderr,
+        )
         return 0
 
     if not args.name:
