@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Hover **tooltips** on the paste-dialog options (issue #2). A short, ~500ms
+  delayed hint explains each control — most importantly that "Store
+  permanently" overrides the default 24h TTL. Tooltips also cover the value
+  field, the key-name header, the optional description, and the remote-mirror
+  checkbox. Implemented with a dependency-free `tk.Toplevel` helper that works
+  in **both** the CustomTkinter UI and the stdlib `ttk` fallback (no new
+  third-party dependency), brand-tinted for dark mode, and fully defensive so a
+  tooltip can never crash the dialog.
+
 ## [1.1.0] — 2026-05-29
 
 ### Changed
