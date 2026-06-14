@@ -120,3 +120,43 @@ never read from it.
 Everything is local to your machine, the value never enters the chat transcript,
 the optional vault mirror is write-only, and nothing is ever sent to the author
 or any third party.
+
+---
+
+## 4. Troubleshooting
+
+### macOS: Homebrew Python has a broken `pyexpat` (pip / XML errors)
+
+**Symptom.** On recent macOS the Homebrew Pythons (seen on both 3.13 and 3.14)
+can ship a `pyexpat` that fails to import. You'll see errors when `pip` or any
+XML code runs, typically a dynamic-link failure mentioning **`libexpat`** and a
+missing symbol like **`_XML…ActivationThreshold`** — the bundled `pyexpat.so`
+expects a newer system `/usr/lib/libexpat` than the OS provides. This breaks
+**every Homebrew-Python tool**, not just `secret-paste`: `pipx install …` can
+fail, and `import pyexpat` (or anything that imports it) raises an
+`ImportError` about the missing symbol.
+
+**Fix — install secret-paste under a [uv](https://docs.astral.sh/uv/)-managed
+Python.** uv ships a standalone Python build with a working `expat` (and Tk),
+so it sidesteps the broken Homebrew interpreter entirely:
+
+```bash
+uv python install 3.13
+uv tool install secret-paste
+```
+
+This was confirmed end-to-end on macOS 26.2 (install completed, backend
+detected: `keychain`).
+
+**Alternative — pipx pinned to the uv Python.** If you prefer `pipx`, point it
+at the uv-managed interpreter instead of the broken Homebrew one:
+
+```bash
+uv python install 3.13
+pipx install --python "$(uv python find 3.13)" secret-paste
+```
+
+**GUI window.** `secret-paste` opens a Tk dialog; on macOS that needs Tk. A
+uv-managed Python includes it. If you're on a different Python that lacks it,
+install Tk as covered in [§2 Manual install](#2-manual-install-no-ai-agent):
+`brew install python-tk`.
