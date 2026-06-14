@@ -1,0 +1,14 @@
+{
+  "header": "Enter credential: {key}",
+  "paste_hint": "Paste the value (Ctrl+V on Win/Linux, ⌘V on macOS). Stored locally on this machine.",
+  "paste_button": "Paste",
+  "show_value": "Show value",
+  "mirror_remote": "Also mirror to remote backend",
+  "detected_vaults": "Detected: {vaults}. See ROADMAP.md.",
+  "store_permanently": "Store permanently (no local TTL)",
+  "backend": "Backend: {label}",
+  "save": "Save",
+  "cancel": "Cancel",
+  "error_empty": "Please enter a value.",
+  "toast_stored": "[OK] Stored: {key}"
+}

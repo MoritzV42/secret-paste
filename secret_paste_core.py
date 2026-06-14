@@ -137,9 +137,12 @@ def _safe_name(name: str) -> str:
 
 # Default config: remote mirroring is OFF until the user opts in. A None
 # backend means "no remote backend configured yet" even when remote_enabled.
+# ``locale`` is None = auto (resolve from the OS locale on first run); once the
+# user flips the DE/EN toggle it is pinned to "de" / "en" and persisted here.
 CONFIG_DEFAULTS: dict = {
     "remote_enabled": False,
     "remote_backend": None,
+    "locale": None,
 }
 
 
@@ -177,6 +180,18 @@ def set_remote_enabled(enabled: bool) -> dict:
     """Toggle the ``remote_enabled`` flag and persist. Returns the new config."""
     cfg = load_config()
     cfg["remote_enabled"] = bool(enabled)
+    save_config(cfg)
+    return cfg
+
+
+def set_locale(lang: str | None) -> dict:
+    """Persist the UI locale (``"de"`` / ``"en"`` / ``None`` = auto). Returns config.
+
+    Reuses ``config.json`` (the issue floated a separate ``locale.json``; sharing
+    the existing config keeps a single source of truth and one file to back up).
+    """
+    cfg = load_config()
+    cfg["locale"] = lang or None
     save_config(cfg)
     return cfg
 
@@ -627,9 +642,7 @@ def backend_get(backend: VaultBackend, name: str) -> str | None:
     code path can accidentally read from a write-only mirror.
     """
     if not getattr(backend, "supports_read", True):
-        raise WriteOnlyError(
-            f"Backend {backend.name!r} is write-only and cannot be read from."
-        )
+        raise WriteOnlyError(f"Backend {backend.name!r} is write-only and cannot be read from.")
     return backend.get(name)
 
 

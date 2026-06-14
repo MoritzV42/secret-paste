@@ -21,6 +21,21 @@ import argparse
 import sys
 
 import secret_paste_core as cc
+import secret_paste_i18n as i18n
+
+
+def resolve_lang(cli_lang: str | None) -> str:
+    """Resolve the effective UI language for this run.
+
+    Precedence: ``--lang`` (this run only) > persisted ``config.locale`` >
+    system-locale auto-default. Always returns a supported code ("de"/"en").
+    """
+    if cli_lang:
+        return i18n.normalize_lang(cli_lang)
+    persisted = cc.load_config().get("locale")
+    if persisted:
+        return i18n.normalize_lang(persisted)
+    return i18n.system_default_lang()
 
 
 def _enable_dpi_awareness() -> None:
@@ -96,6 +111,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "[PLANNED] Create a one-time, self-destructing share link for a "
             "secret instead of storing it locally. Not implemented yet — prints "
             "a notice and exits. See docs/one-time-sharing.md."
+        ),
+    )
+    p.add_argument(
+        "--lang",
+        choices=("de", "en"),
+        default=None,
+        help=(
+            "UI language for the dialog (de|en). Overrides the persisted/auto "
+            "locale for this run only. CLI log output stays English."
         ),
     )
     p.add_argument(
@@ -520,6 +544,7 @@ def show_dialog(
     default_persist: bool,
     backend_label: str,
     multiline: bool = False,
+    lang: str | None = None,
 ) -> tuple[bool, str, bool, bool]:
     """Modal dialog. Returns ``(ok, value, vault_checkbox, persist_checkbox)``.
 
@@ -530,23 +555,26 @@ def show_dialog(
 
     When ``multiline`` is set, the input is a multi-row text box (for a whole
     .env / recovery-code block) instead of a masked single-line field.
+
+    ``lang`` selects the initial UI language ("de"/"en"); the user can still flip
+    the in-dialog DE/EN toggle, which re-translates live and persists the choice.
     """
     _enable_dpi_awareness()
     try:
         import customtkinter  # noqa: F401
     except Exception:  # noqa: BLE001
         return _show_dialog_ttk(
-            key_name, description, default_persist, backend_label, multiline
+            key_name, description, default_persist, backend_label, multiline, lang
         )
     try:
         return _show_dialog_ctk(
-            key_name, description, default_persist, backend_label, multiline
+            key_name, description, default_persist, backend_label, multiline, lang
         )
     except Exception:  # noqa: BLE001
         # If the modern UI fails for any reason, never block the user — fall
         # back to the always-available stdlib dialog.
         return _show_dialog_ttk(
-            key_name, description, default_persist, backend_label, multiline
+            key_name, description, default_persist, backend_label, multiline, lang
         )
 
 
@@ -556,10 +584,13 @@ def _show_dialog_ttk(
     default_persist: bool,
     backend_label: str,
     multiline: bool = False,
+    lang: str | None = None,
 ) -> tuple[bool, str, bool, bool]:
     """Pure-stdlib ttk fallback dialog (DPI-aware + dark-contrast fixed)."""
     import tkinter as tk
     from tkinter import ttk
+
+    tr = i18n.Translator(lang)
 
     root = tk.Tk()
     root.title(f"secret-paste: {key_name}")
@@ -569,40 +600,37 @@ def _show_dialog_ttk(
     root.focus_force()
 
     try:
-        root.geometry("620x520" if multiline else "560x340")
-        root.minsize(520, 420) if multiline else root.minsize(480, 280)
+        root.geometry("620x540" if multiline else "560x360")
+        if multiline:
+            root.minsize(520, 440)
+        else:
+            root.minsize(480, 300)
     except Exception:  # noqa: BLE001
         pass
 
     outer = ttk.Frame(root, padding=18)
     outer.pack(fill="both", expand=True)
 
-    header_lbl = ttk.Label(outer, text=f"Enter credential: {key_name}", style="Header.TLabel")
-    header_lbl.pack(anchor="w")
+    # Top row: header on the left, compact DE/EN language toggle on the right.
+    head_row = ttk.Frame(outer)
+    head_row.pack(fill="x")
+
+    lang_var = tk.StringVar(value=tr.lang)
+    lang_box = ttk.Frame(head_row)
+    lang_box.pack(side="right")
+    ttk.Radiobutton(lang_box, text="EN", value="en", variable=lang_var).pack(side="left")
+    ttk.Radiobutton(lang_box, text="DE", value="de", variable=lang_var).pack(side="left")
+
+    header_lbl = ttk.Label(head_row, text="", style="Header.TLabel")
+    header_lbl.pack(side="left", anchor="w")
     # The header is the only place the key name appears in the dialog.
     _attach_tooltip(header_lbl, TOOLTIP_TEXTS["header"])
 
-    if multiline:
-        default_hint = (
-            "Paste a multi-line block (e.g. a .env file of KEY=VALUE lines). "
-            "Shown in plaintext. Ctrl+Enter or Save to submit; Esc cancels. "
-            "Stored locally on this machine."
-        )
-    else:
-        default_hint = (
-            "Paste the value (Ctrl+V on Win/Linux, ⌘V on macOS). "
-            "Stored locally on this machine."
-        )
-    desc_lbl = ttk.Label(
-        outer,
-        text=description or default_hint,
-        style="Hint.TLabel",
-        wraplength=580,
-    )
-    desc_lbl.pack(anchor="w", pady=(4, 10))
+    hint_lbl = ttk.Label(outer, text="", style="Hint.TLabel", wraplength=580)
+    hint_lbl.pack(anchor="w", pady=(4, 10))
     # When a CLI --desc was supplied, this label *is* the description; tooltip it.
     if description:
-        _attach_tooltip(desc_lbl, TOOLTIP_TEXTS["description"])
+        _attach_tooltip(hint_lbl, TOOLTIP_TEXTS["description"])
 
     value_var = tk.StringVar()  # only used in single-line mode
     show_var = tk.BooleanVar(value=False)
@@ -668,9 +696,9 @@ def _show_dialog_ttk(
                 entry.icursor("end")
             entry.focus_set()
 
-    paste_btn = ttk.Button(entry_row, text="Paste", width=8, command=paste_clipboard)
+    paste_btn = ttk.Button(entry_row, text="", width=10, command=paste_clipboard)
     if multiline:
-        # Below the text box, right-aligned, so the box gets the full width.
+        # Beside the text box, top-aligned, so the box gets the full height.
         paste_btn.pack(side="left", padx=(8, 0), anchor="n")
     else:
         paste_btn.pack(side="left", padx=(8, 0))
@@ -692,10 +720,10 @@ def _show_dialog_ttk(
         value_var.trace_add("write", clear_error)
 
     # "Show value" only applies to the masked single-line field.
+    show_chk = None
     if not multiline:
-        ttk.Checkbutton(outer, text="Show value", variable=show_var, command=toggle_show).pack(
-            anchor="w"
-        )
+        show_chk = ttk.Checkbutton(outer, text="", variable=show_var, command=toggle_show)
+        show_chk.pack(anchor="w")
 
     # Mirror-to-remote is only offered when the user has opted in
     # (remote_enabled) AND at least one supported vault CLI is detected on
@@ -705,42 +733,31 @@ def _show_dialog_ttk(
     detected_vaults = cc.detect_vaults()
     show_mirror = bool(cfg.get("remote_enabled")) and bool(detected_vaults)
 
+    mirror_chk = None
+    mirror_hint_lbl = None
     if show_mirror:
         ttk.Separator(outer).pack(fill="x", pady=10)
-        mirror_cb = ttk.Checkbutton(
-            outer,
-            text="Also mirror to remote backend",
-            variable=vault_var,
-        )
-        mirror_cb.pack(anchor="w")
-        _attach_tooltip(mirror_cb, TOOLTIP_TEXTS["mirror"])
-        ttk.Label(
-            outer,
-            text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
-            style="Muted.TLabel",
-            wraplength=520,
-        ).pack(anchor="w", padx=(22, 0))
+        mirror_chk = ttk.Checkbutton(outer, text="", variable=vault_var)
+        mirror_chk.pack(anchor="w")
+        _attach_tooltip(mirror_chk, TOOLTIP_TEXTS["mirror"])
+        mirror_hint_lbl = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=520)
+        mirror_hint_lbl.pack(anchor="w", padx=(22, 0))
     else:
         ttk.Separator(outer).pack(fill="x", pady=10)
 
-    persist_cb = ttk.Checkbutton(
-        outer,
-        text="Store permanently (no local TTL)",
-        variable=persist_var,
-    )
-    persist_cb.pack(anchor="w", pady=(6, 4))
-    _attach_tooltip(persist_cb, TOOLTIP_TEXTS["persist"])
+    persist_chk = ttk.Checkbutton(outer, text="", variable=persist_var)
+    persist_chk.pack(anchor="w", pady=(6, 4))
+    _attach_tooltip(persist_chk, TOOLTIP_TEXTS["persist"])
 
-    ttk.Label(outer, text=f"Backend: {backend_label}", style="Backend.TLabel").pack(
-        anchor="w", pady=(12, 0)
-    )
+    backend_lbl = ttk.Label(outer, text="", style="Backend.TLabel")
+    backend_lbl.pack(anchor="w", pady=(12, 0))
 
     result: dict = {"ok": False}
 
     def on_ok(event=None):
         val = _current_value()
         if not val:
-            err_lbl.configure(text="Please enter a value.")
+            err_lbl.configure(text=tr.t("error_empty"))
             (text_widget or entry).focus_set()
             return
         result["ok"] = True
@@ -755,14 +772,45 @@ def _show_dialog_ttk(
 
     btn_frame = ttk.Frame(outer)
     btn_frame.pack(fill="x", pady=(14, 0))
-    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
-    ok_btn = ttk.Button(btn_frame, text="Save", command=on_ok)
+    cancel_btn = ttk.Button(btn_frame, text="", command=on_cancel)
+    cancel_btn.pack(side="right")
+    ok_btn = ttk.Button(btn_frame, text="", command=on_ok)
     # Apply the accent style only if the theme supports it — fall back otherwise.
     try:
         ok_btn.configure(style="Accent.TButton")
     except Exception:  # noqa: BLE001
         pass
     ok_btn.pack(side="right", padx=(0, 8))
+
+    def retranslate() -> None:
+        """(Re)apply every localizable label from the active Translator.
+
+        Called once at startup and again whenever the DE/EN toggle flips, so
+        switching language updates all strings live without a restart.
+        """
+        header_lbl.configure(text=tr.t("header", key=key_name))
+        hint_lbl.configure(text=description or tr.t("paste_hint"))
+        paste_btn.configure(text=tr.t("paste_button"))
+        if show_chk is not None:
+            show_chk.configure(text=tr.t("show_value"))
+        if mirror_chk is not None:
+            mirror_chk.configure(text=tr.t("mirror_remote"))
+        if mirror_hint_lbl is not None:
+            mirror_hint_lbl.configure(
+                text=tr.t("detected_vaults", vaults=", ".join(detected_vaults))
+            )
+        persist_chk.configure(text=tr.t("store_permanently"))
+        backend_lbl.configure(text=tr.t("backend", label=backend_label))
+        ok_btn.configure(text=tr.t("save"))
+        cancel_btn.configure(text=tr.t("cancel"))
+
+    def on_lang_change(*_):
+        tr.set_lang(lang_var.get())
+        cc.set_locale(tr.lang)  # persist the choice across sessions
+        retranslate()
+
+    lang_var.trace_add("write", on_lang_change)
+    retranslate()
 
     if multiline:
         # Enter inserts a newline in the text box; submit via Ctrl+Enter so the
@@ -792,6 +840,7 @@ def _show_dialog_ctk(
     default_persist: bool,
     backend_label: str,
     multiline: bool = False,
+    lang: str | None = None,
 ) -> tuple[bool, str, bool, bool]:
     """Modern CustomTkinter dialog. Same return contract as the ttk path.
 
@@ -802,8 +851,13 @@ def _show_dialog_ctk(
     When ``multiline`` is set, a ``CTkTextbox`` replaces the masked entry for a
     whole .env / recovery-code block (shown in plaintext — masking a text box
     is not feasible).
+
+    ``lang`` selects the initial UI language; a compact DE/EN segmented toggle
+    top-right re-translates all strings live and persists the choice to config.
     """
     import customtkinter as ctk
+
+    tr = i18n.Translator(lang)
 
     ctk.set_appearance_mode("system")
 
@@ -817,8 +871,11 @@ def _show_dialog_ctk(
     root.lift()
     root.focus_force()
     try:
-        root.geometry("640x560" if multiline else "580x420")
-        root.minsize(560, 460) if multiline else root.minsize(520, 360)
+        root.geometry("640x580" if multiline else "580x440")
+        if multiline:
+            root.minsize(560, 480)
+        else:
+            root.minsize(520, 380)
     except Exception:  # noqa: BLE001
         pass
 
@@ -831,41 +888,47 @@ def _show_dialog_ctk(
     outer = ctk.CTkFrame(root, fg_color="transparent")
     outer.pack(fill="both", expand=True, padx=26, pady=22)
 
+    # Top row: header left, compact DE/EN segmented toggle right.
+    head_row = ctk.CTkFrame(outer, fg_color="transparent")
+    head_row.pack(anchor="w", fill="x")
+
+    lang_seg = ctk.CTkSegmentedButton(
+        head_row,
+        values=["EN", "DE"],
+        width=96,
+        font=f_small,
+        fg_color=BRAND["surface_alt"],
+        selected_color=BRAND["violet"],
+        selected_hover_color=BRAND["violet_light"],
+        unselected_color=BRAND["surface_alt"],
+        text_color=BRAND["text"],
+    )
+    lang_seg.pack(side="right")
+
     header_lbl = ctk.CTkLabel(
-        outer,
-        text=f"Enter credential: {key_name}",
+        head_row,
+        text="",
         font=f_header,
         text_color=BRAND["text"],
         anchor="w",
     )
-    header_lbl.pack(anchor="w", fill="x")
+    header_lbl.pack(side="left", anchor="w", fill="x")
     # The header is the only place the key name appears in the dialog.
     _attach_tooltip(header_lbl, TOOLTIP_TEXTS["header"])
 
-    if multiline:
-        default_hint = (
-            "Paste a multi-line block (e.g. a .env file of KEY=VALUE lines). "
-            "Shown in plaintext. Ctrl+Enter or Save to submit; Esc cancels. "
-            "Stored locally on this machine."
-        )
-    else:
-        default_hint = (
-            "Paste the value (Ctrl+V on Win/Linux, ⌘V on macOS). "
-            "Stored locally on this machine."
-        )
-    desc_lbl = ctk.CTkLabel(
+    hint_lbl = ctk.CTkLabel(
         outer,
-        text=description or default_hint,
+        text="",
         font=f_small,
         text_color=BRAND["muted"],
         anchor="w",
         justify="left",
         wraplength=560,
     )
-    desc_lbl.pack(anchor="w", fill="x", pady=(4, 14))
+    hint_lbl.pack(anchor="w", fill="x", pady=(4, 14))
     # When a CLI --desc was supplied, this label *is* the description; tooltip it.
     if description:
-        _attach_tooltip(desc_lbl, TOOLTIP_TEXTS["description"])
+        _attach_tooltip(hint_lbl, TOOLTIP_TEXTS["description"])
 
     value_var = ctk.StringVar()  # only used in single-line mode
     show_var = ctk.BooleanVar(value=False)
@@ -934,10 +997,10 @@ def _show_dialog_ctk(
                 entry.icursor("end")
             entry.focus_set()
 
-    ctk.CTkButton(
+    paste_btn = ctk.CTkButton(
         entry_row,
-        text="Paste",
-        width=84,
+        text="",
+        width=96,
         height=40,
         command=paste_clipboard,
         font=f_small,
@@ -946,7 +1009,11 @@ def _show_dialog_ctk(
         text_color=BRAND["text"],
         border_width=1,
         border_color=BRAND["line"],
-    ).pack(side="left", padx=(10, 0), anchor="n")
+    )
+    if multiline:
+        paste_btn.pack(side="left", padx=(10, 0), anchor="n")
+    else:
+        paste_btn.pack(side="left", padx=(10, 0))
 
     err_lbl = ctk.CTkLabel(outer, text="", font=f_small, text_color="#f87171", anchor="w")
     err_lbl.pack(anchor="w", fill="x", pady=(4, 0))
@@ -965,10 +1032,11 @@ def _show_dialog_ctk(
         value_var.trace_add("write", clear_error)
 
     # "Show value" only applies to the masked single-line field.
+    show_chk = None
     if not multiline:
-        ctk.CTkCheckBox(
+        show_chk = ctk.CTkCheckBox(
             outer,
-            text="Show value",
+            text="",
             variable=show_var,
             command=toggle_show,
             font=f_small,
@@ -976,7 +1044,8 @@ def _show_dialog_ctk(
             fg_color=BRAND["violet"],
             hover_color=BRAND["violet_light"],
             border_color=BRAND["line"],
-        ).pack(anchor="w", pady=(6, 0))
+        )
+        show_chk.pack(anchor="w", pady=(6, 0))
 
     # Mirror-to-remote is only offered when the user has opted in
     # (remote_enabled) AND at least one supported vault CLI is detected on PATH.
@@ -984,11 +1053,13 @@ def _show_dialog_ctk(
     detected_vaults = cc.detect_vaults()
     show_mirror = bool(cfg.get("remote_enabled")) and bool(detected_vaults)
 
+    mirror_chk = None
+    mirror_hint_lbl = None
     if show_mirror:
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
-        mirror_cb = ctk.CTkCheckBox(
+        mirror_chk = ctk.CTkCheckBox(
             outer,
-            text="Also mirror to remote backend",
+            text="",
             variable=vault_var,
             font=f_small,
             text_color=BRAND["text"],
@@ -996,23 +1067,24 @@ def _show_dialog_ctk(
             hover_color=BRAND["violet_light"],
             border_color=BRAND["line"],
         )
-        mirror_cb.pack(anchor="w")
-        _attach_tooltip(mirror_cb, TOOLTIP_TEXTS["mirror"])
-        ctk.CTkLabel(
+        mirror_chk.pack(anchor="w")
+        _attach_tooltip(mirror_chk, TOOLTIP_TEXTS["mirror"])
+        mirror_hint_lbl = ctk.CTkLabel(
             outer,
-            text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
+            text="",
             font=f_small,
             text_color=BRAND["muted"],
             anchor="w",
             justify="left",
             wraplength=520,
-        ).pack(anchor="w", fill="x", padx=(28, 0))
+        )
+        mirror_hint_lbl.pack(anchor="w", fill="x", padx=(28, 0))
     else:
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
 
-    persist_cb = ctk.CTkCheckBox(
+    persist_chk = ctk.CTkCheckBox(
         outer,
-        text="Store permanently (no local TTL)",
+        text="",
         variable=persist_var,
         font=f_small,
         text_color=BRAND["text"],
@@ -1020,23 +1092,24 @@ def _show_dialog_ctk(
         hover_color=BRAND["violet_light"],
         border_color=BRAND["line"],
     )
-    persist_cb.pack(anchor="w", pady=(6, 4))
-    _attach_tooltip(persist_cb, TOOLTIP_TEXTS["persist"])
+    persist_chk.pack(anchor="w", pady=(6, 4))
+    _attach_tooltip(persist_chk, TOOLTIP_TEXTS["persist"])
 
-    ctk.CTkLabel(
+    backend_lbl = ctk.CTkLabel(
         outer,
-        text=f"Backend: {backend_label}",
+        text="",
         font=f_small,
         text_color=BRAND["cyan_light"],
         anchor="w",
-    ).pack(anchor="w", fill="x", pady=(12, 0))
+    )
+    backend_lbl.pack(anchor="w", fill="x", pady=(12, 0))
 
     result: dict = {"ok": False}
 
     def on_ok(event=None):
         val = _current_value()
         if not val:
-            err_lbl.configure(text="Please enter a value.")
+            err_lbl.configure(text=tr.t("error_empty"))
             (textbox or entry).focus_set()
             return
         result["ok"] = True
@@ -1052,9 +1125,9 @@ def _show_dialog_ctk(
     btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
     btn_frame.pack(fill="x", side="bottom", pady=(16, 0))
 
-    ctk.CTkButton(
+    cancel_btn = ctk.CTkButton(
         btn_frame,
-        text="Cancel",
+        text="",
         width=110,
         height=42,
         command=on_cancel,
@@ -1064,14 +1137,15 @@ def _show_dialog_ctk(
         text_color=BRAND["muted"],
         border_width=1,
         border_color=BRAND["line"],
-    ).pack(side="right")
+    )
+    cancel_btn.pack(side="right")
 
     # Primary "Save" action in the cyan→violet brand accent. CTk buttons don't
     # render gradients, so we use the violet end as a solid fill with a cyan
     # hover — reading as the same accent family as the landing page.
-    ctk.CTkButton(
+    ok_btn = ctk.CTkButton(
         btn_frame,
-        text="Save",
+        text="",
         width=140,
         height=42,
         command=on_ok,
@@ -1079,7 +1153,40 @@ def _show_dialog_ctk(
         fg_color=BRAND["violet"],
         hover_color=BRAND["cyan"],
         text_color="#ffffff",
-    ).pack(side="right", padx=(0, 10))
+    )
+    ok_btn.pack(side="right", padx=(0, 10))
+
+    def retranslate() -> None:
+        """(Re)apply every localizable label from the active Translator.
+
+        Called once at startup and again whenever the DE/EN toggle flips, so
+        switching language updates all strings live without a restart.
+        """
+        header_lbl.configure(text=tr.t("header", key=key_name))
+        hint_lbl.configure(text=description or tr.t("paste_hint"))
+        paste_btn.configure(text=tr.t("paste_button"))
+        if show_chk is not None:
+            show_chk.configure(text=tr.t("show_value"))
+        if mirror_chk is not None:
+            mirror_chk.configure(text=tr.t("mirror_remote"))
+        if mirror_hint_lbl is not None:
+            mirror_hint_lbl.configure(
+                text=tr.t("detected_vaults", vaults=", ".join(detected_vaults))
+            )
+        persist_chk.configure(text=tr.t("store_permanently"))
+        backend_lbl.configure(text=tr.t("backend", label=backend_label))
+        ok_btn.configure(text=tr.t("save"))
+        cancel_btn.configure(text=tr.t("cancel"))
+
+    def on_lang_change(value: str) -> None:
+        tr.set_lang(value)
+        cc.set_locale(tr.lang)  # persist the choice across sessions
+        retranslate()
+
+    lang_seg.configure(command=on_lang_change)
+    # Set the initial segment without firing the command (no redundant save).
+    lang_seg.set("DE" if tr.lang == "de" else "EN")
+    retranslate()
 
     if multiline:
         root.bind("<Control-Return>", on_ok)
@@ -1101,7 +1208,7 @@ def _show_dialog_ctk(
     )
 
 
-def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
+def show_toast(key_name: str, ttl_text: str, backend_label: str, lang: str | None = None) -> None:
     """Brief auto-closing confirmation popup after a successful paste."""
     _enable_dpi_awareness()
     try:
@@ -1118,11 +1225,13 @@ def show_toast(key_name: str, ttl_text: str, backend_label: str) -> None:
     root.attributes("-topmost", True)
     root.configure(bg="#2a2a2a")
 
+    tr = i18n.Translator(lang)
+
     frame = ttk.Frame(root, padding=14)
     frame.pack()
     ttk.Label(
         frame,
-        text=f"[OK] Stored: {key_name}",
+        text=tr.t("toast_stored", key=key_name),
         style="Header.TLabel",
     ).pack(anchor="w")
     ttk.Label(
@@ -1147,6 +1256,7 @@ def _print_config() -> None:
     detected = cc.detect_vaults()
     print(f"remote_enabled: {cfg.get('remote_enabled')}")
     print(f"remote_backend: {cfg.get('remote_backend')}")
+    print(f"locale: {cfg.get('locale') or '(auto)'}")
     print(f"detected vault CLIs: {', '.join(detected) if detected else '(none)'}")
 
 
@@ -1227,12 +1337,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    # Effective UI language: --lang (this run) > persisted config > system auto.
+    ui_lang = resolve_lang(args.lang)
+
     ok, value, vault, persist_flag = show_dialog(
         args.name,
         args.desc,
         default_persist=args.persist,
         backend_label=backend_label,
         multiline=args.multiline,
+        lang=ui_lang,
     )
     if not ok:
         print("Cancelled.", file=sys.stderr)
@@ -1256,7 +1370,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    show_toast(args.name, ttl_text, backend_label)
+    # The dialog may have switched + persisted the language; re-resolve so the
+    # toast matches what the user last selected (--lang still wins for the run).
+    show_toast(args.name, ttl_text, backend_label, lang=resolve_lang(args.lang))
     return 0
 
 
