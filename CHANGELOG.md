@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- macOS troubleshooting section in `SETUP.md`: recognising and working around a
+  broken Homebrew-Python `pyexpat` (the `libexpat` / `_XML…ActivationThreshold`
+  symbol error that breaks pip/XML for all brew-Python tools), with the
+  uv-managed-Python workaround (`uv python install` + `uv tool install`, or
+  `pipx --python "$(uv python find …)"`). Pointer from the README install
+  section; cross-links the existing `brew install python-tk` note for the GUI.
+
 ## [1.1.0] — 2026-05-29
 
 ### Changed

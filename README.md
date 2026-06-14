@@ -62,6 +62,11 @@ pipx install secret-paste[gui]
 This is purely optional. Without it, `secret-paste` uses a zero-dependency
 stdlib (tkinter) dialog that is DPI-aware and dark-mode-correct on its own.
 
+> **macOS:** if `pipx install` fails with a `pyexpat` / `libexpat` symbol
+> error, your Homebrew Python is broken (affects all brew-Python tools).
+> Install under a uv-managed Python instead — see
+> [SETUP.md → Troubleshooting](SETUP.md#4-troubleshooting).
+
 ### From source
 
 ```bash
