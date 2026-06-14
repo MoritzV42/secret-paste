@@ -63,8 +63,9 @@ def test_show_dialog_falls_back_when_customtkinter_missing(monkeypatch, no_vault
 
     called = {}
 
-    def fake_ttk(key_name, description, default_persist, backend_label):
+    def fake_ttk(key_name, description, default_persist, backend_label, multiline=False):
         called["args"] = (key_name, description, default_persist, backend_label)
+        called["multiline"] = multiline
         return (True, "from-ttk", False, True)
 
     monkeypatch.setattr(cli, "_show_dialog_ttk", fake_ttk)
@@ -72,13 +73,14 @@ def test_show_dialog_falls_back_when_customtkinter_missing(monkeypatch, no_vault
     result = cli.show_dialog("DEMO", "desc", False, "Windows DPAPI")
     assert result == (True, "from-ttk", False, True)
     assert called["args"] == ("DEMO", "desc", False, "Windows DPAPI")
+    assert called["multiline"] is False
 
 
 def test_show_dialog_uses_ctk_when_available(monkeypatch, no_vault_config):
     """If ``customtkinter`` imports, show_dialog routes to the CTk path."""
     pytest.importorskip("customtkinter")
 
-    def fake_ctk(key_name, description, default_persist, backend_label):
+    def fake_ctk(key_name, description, default_persist, backend_label, multiline=False):
         return (True, "from-ctk", True, False)
 
     monkeypatch.setattr(cli, "_show_dialog_ctk", fake_ctk)
@@ -102,7 +104,7 @@ def test_show_dialog_ctk_falls_back_on_build_error(monkeypatch, no_vault_config)
     assert result == (False, "", False, False)
 
 
-def _build_and_teardown(dialog_fn, monkeypatch):
+def _build_and_teardown(dialog_fn, monkeypatch, multiline=False):
     """Run a dialog builder with a no-op mainloop so it builds + tears down."""
     ctk = pytest.importorskip("customtkinter")
 
@@ -115,7 +117,9 @@ def _build_and_teardown(dialog_fn, monkeypatch):
                 self.destroy()
 
         monkeypatch.setattr(ctk, "CTk", NonBlockingCTk)
-        return dialog_fn("DEMO_KEY", "A demo credential", False, "Windows DPAPI")
+        return dialog_fn(
+            "DEMO_KEY", "A demo credential", False, "Windows DPAPI", multiline
+        )
     except Exception as exc:  # noqa: BLE001
         # No display available (headless CI) -> Tcl error. Skip, don't fail.
         pytest.skip(f"no GUI environment available: {exc!r}")
@@ -145,6 +149,12 @@ def test_ttk_dialog_builds_headless_cancel_contract(monkeypatch, no_vault_config
 
     monkeypatch.setattr(tk, "Tk", NonBlockingTk)
     result = cli._show_dialog_ttk("DEMO_KEY", "A demo credential", False, "Windows DPAPI")
+    assert result == (False, "", False, False)
+
+
+def test_ctk_dialog_builds_multiline_textbox(monkeypatch, no_vault_config):
+    """The multiline CTk dialog (CTkTextbox path) builds + returns cancel tuple."""
+    result = _build_and_teardown(cli._show_dialog_ctk, monkeypatch, multiline=True)
     assert result == (False, "", False, False)
 
 
