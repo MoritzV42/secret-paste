@@ -845,3 +845,93 @@ def configured_remote_backend(cfg: dict | None = None) -> VaultBackend | None:
 #
 # class BitwardenBackend(VaultBackend):   # bw CLI
 # class OnePasswordBackend(VaultBackend): # op CLI
+
+
+# --- One-time sharing (DESIGN SKELETON — NOT WIRED IN) -------------------
+#
+# Concept + threat model + open decisions: docs/one-time-sharing.md
+#
+# This is a deliberately non-functional skeleton. It is NOT imported by any
+# default code path and changes no existing behavior — it only fixes the
+# *shape* of the interface so the server approach can be chosen before any
+# server is built. Every method raises NotImplementedError pointing at the
+# design doc. Do not wire this into the CLI flow until the open decisions in
+# the doc are settled.
+#
+# Why a separate interface (not VaultBackend): one-time sharing is
+# write-then-read-once-then-gone. Its `reveal` is destructive and non-
+# idempotent, which violates the "safe, named, idempotent read" contract that
+# VaultBackend.get / backend_get guarantee. Keeping it separate keeps that
+# guarantee intact and makes the destructive semantics explicit in the type.
+
+
+@dataclass
+class ShareLink:
+    """Result of creating a one-time share. Carries NO plaintext or key state.
+
+    ``url`` is the full link to hand over, including the ``#k=...`` fragment
+    that holds the decryption key. The fragment is never sent to the server
+    (RFC 3986 §3.5), so the server only ever sees ``record_id`` + ciphertext.
+    """
+
+    url: str
+    record_id: str
+    expires_at: str | None = None  # ISO-8601 server-side expiry if unopened
+
+
+class ShareBackend(ABC):
+    """Pluggable backend for one-time, single-view secret *sharing* (skeleton).
+
+    Contrast with ``VaultBackend`` (named, re-readable local storage): a
+    ``ShareBackend`` uploads client-encrypted ciphertext to a zero-knowledge
+    server and returns a one-time link. ``reveal`` is destructive — the server
+    deletes its copy as part of serving the read.
+
+    Trust requirement (see docs/one-time-sharing.md): the server stores only
+    ciphertext; the decryption key lives solely in the URL fragment and is
+    never transmitted. Implementations MUST encrypt client-side before upload
+    and MUST NEVER send the key or plaintext to the server.
+
+    This is a skeleton: both methods raise ``NotImplementedError``. No concrete
+    backend ships yet — the server approach is an open maintainer decision.
+    """
+
+    name: str = "abstract-share"
+
+    @abstractmethod
+    def create(self, value: str, *, ttl_seconds: int | None = None) -> ShareLink:
+        """Encrypt ``value`` client-side, upload only the ciphertext, and return
+        a one-time link. The plaintext and the key never leave the client except
+        inside the returned URL's fragment.
+
+        ``ttl_seconds`` is the server-side expiry for an *unopened* link
+        (``None`` = backend default).
+        """
+        raise NotImplementedError(
+            "One-time sharing is not implemented yet. See docs/one-time-sharing.md "
+            "(server approach is an open maintainer decision)."
+        )
+
+    @abstractmethod
+    def reveal(self, url: str) -> str:
+        """Fetch + decrypt the secret behind ``url`` exactly once, then let the
+        server destroy its copy. Raises if already viewed / expired / not found.
+
+        Destructive and non-idempotent by design — calling twice must not return
+        the value twice.
+        """
+        raise NotImplementedError(
+            "One-time sharing is not implemented yet. See docs/one-time-sharing.md "
+            "(server approach is an open maintainer decision)."
+        )
+
+
+def configured_share_backend(cfg: dict | None = None) -> ShareBackend | None:
+    """Return the configured one-time-share backend, or None.
+
+    Skeleton: no share backend type is registered yet, so this always returns
+    None (one-time sharing is not configured). It mirrors
+    ``configured_remote_backend`` so wiring it in later is a small, obvious
+    change once the server approach is chosen. See docs/one-time-sharing.md.
+    """
+    return None
