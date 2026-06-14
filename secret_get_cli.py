@@ -100,12 +100,54 @@ def _ps_quote(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
-def _emit_export(env_name: str, tmp_path, shell: str) -> str:
-    """Emit a shell snippet that loads the value from ``tmp_path`` into an env var.
+def _parse_dotenv_lines(text: str) -> list[tuple[str, str]]:
+    """Parse a multi-line dotenv block into ``(KEY, VALUE)`` pairs.
 
-    The value is never on the command line — the snippet reads it from the
-    file at eval time. ``tmp_path`` is fully quoted so directories with
-    spaces, single-quotes, or other special chars do not break the snippet.
+    Pure / side-effect-free so it can be unit-tested. Rules (intentionally
+    minimal — the heavy lifting happens in the emitted snippet, which reads the
+    real values from the temp file at eval time; here we only need the KEY names
+    and a structural split):
+
+    * Blank lines and lines whose first non-space char is ``#`` are skipped.
+    * A leading ``export `` prefix is tolerated and stripped.
+    * Each remaining line is split on the FIRST ``=`` into key/value.
+    * The key is trimmed of surrounding whitespace; lines without ``=`` or with
+      an empty key are skipped.
+
+    The returned VALUE is the raw right-hand side as it appears in ``text`` —
+    callers that emit a snippet IGNORE it and re-read the value from the temp
+    file, so the value never leaves the file. It is returned only to keep the
+    helper useful/testable on its own.
+    """
+    pairs: list[tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        pairs.append((key, value))
+    return pairs
+
+
+def _emit_export(env_name: str, tmp_path, shell: str, value: str = "") -> str:
+    """Emit a shell snippet that loads the value(s) from ``tmp_path`` into env.
+
+    Single-line values keep the historical behaviour exactly: one env var named
+    ``env_name`` is set from the whole file. When ``value`` contains a newline,
+    the file is treated as a dotenv block and the snippet sets EACH ``KEY=VALUE``
+    line as its own env var.
+
+    In BOTH modes the value is never on the command line / in the snippet — the
+    snippet reads it from the file at eval time. ``tmp_path`` is fully quoted so
+    directories with spaces, single-quotes, or other special chars do not break
+    the snippet.
 
     Note for callers: if shell tracing is active (``set -x`` / ``Set-PSDebug
     -Trace``), the value may be echoed by the shell itself. Run the snippet
@@ -114,23 +156,68 @@ def _emit_export(env_name: str, tmp_path, shell: str) -> str:
     if shell == "auto":
         shell = "ps" if sys.platform == "win32" else "posix"
 
+    multiline = "\n" in value
     path_str = str(tmp_path)
-    if shell == "ps":
-        path_q = _ps_quote(path_str)
-        return (
-            f"# File TTL: {cc.TMP_TTL_MINUTES} min. "
-            "Run in a non-traced shell to avoid leaks.\n"
-            f"$env:{env_name} = (Get-Content -Raw -Encoding UTF8 "
-            f'{path_q}).TrimEnd("`r`n")\n'
-            f"Write-Host 'OK: $env:{env_name} set from {path_q}'"
-        )
-    path_q = shlex.quote(path_str)
-    return (
+    ttl_header = (
         f"# File TTL: {cc.TMP_TTL_MINUTES} min. "
         "Run in a non-traced shell to avoid leaks.\n"
-        f"IFS= read -r {env_name} < {path_q}\n"
-        f"export {env_name}\n"
-        f'echo "OK: \\${env_name} set from {path_q}"'
+    )
+
+    if shell == "ps":
+        path_q = _ps_quote(path_str)
+        if not multiline:
+            return (
+                ttl_header
+                + f"$env:{env_name} = (Get-Content -Raw -Encoding UTF8 "
+                f'{path_q}).TrimEnd("`r`n")\n'
+                f"Write-Host 'OK: $env:{env_name} set from {path_q}'"
+            )
+        # dotenv block: read each line from the file, skip blanks/comments,
+        # split on the first '=', and set $env:KEY. Values stay in the file.
+        return (
+            ttl_header
+            + f"foreach ($line in (Get-Content -Encoding UTF8 {path_q})) {{\n"
+            "  $t = $line.Trim()\n"
+            "  if ($t -eq '' -or $t.StartsWith('#')) { continue }\n"
+            "  if ($t.StartsWith('export ')) { $t = $t.Substring(7).TrimStart() }\n"
+            "  $i = $t.IndexOf('=')\n"
+            "  if ($i -lt 1) { continue }\n"
+            "  $k = $t.Substring(0, $i).Trim()\n"
+            "  $v = $t.Substring($i + 1)\n"
+            "  Set-Item -Path env:$k -Value $v\n"
+            "}\n"
+            f"Write-Host 'OK: env vars set from {path_q}'"
+        )
+
+    path_q = shlex.quote(path_str)
+    if not multiline:
+        return (
+            ttl_header
+            + f"IFS= read -r {env_name} < {path_q}\n"
+            f"export {env_name}\n"
+            f'echo "OK: \\${env_name} set from {path_q}"'
+        )
+    # dotenv block: a read-loop over the file. Each KEY=VALUE line is exported;
+    # blanks / comments are skipped. The value is read from the file, never
+    # interpolated into the snippet text.
+    return (
+        ttl_header
+        + f'while IFS= read -r line || [ -n "$line" ]; do\n'
+        '  case "$line" in\n'
+        "    ''|\\#*) continue ;;\n"
+        "  esac\n"
+        '  line=${line#export }\n'
+        '  case "$line" in\n'
+        "    *=*) ;;\n"
+        "    *) continue ;;\n"
+        "  esac\n"
+        '  key=${line%%=*}\n'
+        '  val=${line#*=}\n'
+        '  key=$(printf %s "$key" | tr -d "[:space:]")\n'
+        '  [ -z "$key" ] && continue\n'
+        '  export "$key=$val"\n'
+        f'done < {path_q}\n'
+        f'echo "OK: env vars set from {path_q}"'
     )
 
 
@@ -182,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload))
     elif args.export_env:
         env_name = safe.upper().replace("-", "_").replace(".", "_")
-        print(_emit_export(env_name, tmp_path, args.shell))
+        print(_emit_export(env_name, tmp_path, args.shell, value))
     else:
         print(
             f"OK: {args.name} available at {tmp_path} "
