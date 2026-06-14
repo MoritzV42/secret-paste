@@ -49,3 +49,35 @@ def test_enable_remote_warns_when_no_vault_detected(isolated_dirs, monkeypatch, 
     rc = cli.main(["--enable-remote"])
     assert rc == 0
     assert "no supported vault CLI" in capsys.readouterr().err
+
+
+def test_multiline_flag_defaults_false():
+    args = cli.parse_args(["MYKEY"])
+    assert args.multiline is False
+
+
+def test_multiline_flag_parses():
+    args = cli.parse_args(["--multiline", "MYKEY"])
+    assert args.multiline is True
+
+
+def test_main_passes_multiline_to_dialog(isolated_dirs, fake_backend, monkeypatch, capsys):
+    """``--multiline`` must reach show_dialog; no real GUI is opened."""
+    monkeypatch.setattr(cli.cc, "default_backend", lambda: core.LocalDPAPIBackend())
+    monkeypatch.setattr(cli.cc, "backend_label", lambda: "fake")
+    monkeypatch.setattr(cli, "show_toast", lambda *a, **k: None)
+
+    seen = {}
+
+    def fake_dialog(name, desc, default_persist, backend_label, multiline=False):
+        seen["multiline"] = multiline
+        # Return a multi-line dotenv value via the canonical contract.
+        return (True, "A=1\nB=2", False, True)
+
+    monkeypatch.setattr(cli, "show_dialog", fake_dialog)
+    rc = cli.main(["--multiline", "ENVBLOCK"])
+    assert rc == 0
+    assert seen["multiline"] is True
+    # The whole multi-line block round-trips through storage.
+    value, _meta = core.read_credential("ENVBLOCK")
+    assert value == "A=1\nB=2"
