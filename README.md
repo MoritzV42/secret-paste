@@ -105,6 +105,7 @@ There are two independent TTLs and they mean different things:
 secret-paste BREVO_KEY --ttl=24            # store kept for 24 hours (default)
 secret-paste BREVO_KEY --persist           # store permanently (no expiry)
 secret-paste BREVO_KEY --desc="Brevo API key (transactional email)"
+secret-paste ZWW_ENVS --multiline          # paste a whole .env block under one name
 
 secret-get BREVO_KEY                        # drops value to a temp file (5-min TTL)
 secret-get BREVO_KEY --export-env          # auto-detects PowerShell or POSIX
@@ -114,6 +115,40 @@ secret-get BREVO_KEY --json                # {"name","path","ttl_remaining"} (no
 secret-list                                 # names + meta, NEVER values
 secret-revoke BREVO_KEY                     # delete locally
 ```
+
+### Storing a whole `.env` block under one name (`--multiline`)
+
+Pasting a 12-line `.env` one key at a time is tedious — and forces your agent
+into a dialog round-trip per variable. `--multiline` fixes that: paste the
+whole block once, store it under a single name, and load all the vars in one
+call.
+
+```bash
+secret-paste ZWW_ENVS --multiline
+```
+
+The dialog shows a ~10-row text box instead of the masked single-line field.
+Paste your block (it's shown in plaintext — masking a multi-line box isn't
+feasible, and these are blocks rather than single passwords), then submit with
+**Ctrl+Enter** or the **Save** button (Enter inserts a newline). Internal
+newlines are preserved exactly.
+
+When you read a multi-line value back with `--export-env`, secret-paste detects
+the `.env` shape and sets **each** `KEY=VALUE` line as its own environment
+variable:
+
+```bash
+# POSIX
+eval "$(secret-get ZWW_ENVS --export-env)"
+
+# PowerShell
+. (secret-get ZWW_ENVS --export-env | Out-String | Invoke-Expression)
+```
+
+Blank lines and `#` comments are skipped; each line is split on the first `=`.
+As with single-line secrets, **the values are read from the temp file at eval
+time and never appear in the emitted snippet or on stdout** — the core security
+property is unchanged. Single-line secrets behave exactly as before.
 
 ## Claude-Code integration
 

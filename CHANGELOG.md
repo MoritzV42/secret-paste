@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `secret-paste --multiline KEY` — store a whole multi-line value (a `.env`
+  block of `KEY=VALUE` lines, a recovery-code block, …) under one name. The
+  dialog shows a ~10-row text box instead of the masked single-line field;
+  submit with **Ctrl+Enter** or the **Save** button (Enter inserts a newline),
+  Esc cancels. Internal newlines are preserved exactly. (Issue #4)
+- `secret-get --export-env` now detects a multi-line dotenv value and emits a
+  snippet that sets **each** `KEY=VALUE` line as its own env var. Blank lines
+  and `#` comments are skipped; the split is on the first `=`. Values are read
+  from the temp file at eval time and **never** appear in the emitted snippet
+  (same security property as the single-line case). Single-line values keep
+  100% identical behavior. Also fixes the POSIX path, which previously read only
+  the first line of a multi-line value. (Issue #4)
+
 ## [1.1.0] — 2026-05-29
 
 ### Changed
