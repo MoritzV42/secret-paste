@@ -351,6 +351,119 @@ def _fade_in(window, *, duration_ms: int = 150, steps: int = 12) -> None:
     window.after(delay, step, 1)
 
 
+# --- Hover tooltips ---------------------------------------------------------
+# Tooltip texts (English; localizable later — see issue #3). Keyed by a stable
+# identifier so both dialog paths reference the exact same copy.
+TOOLTIP_TEXTS = {
+    "value": "Paste once. Hidden after submit, never logged.",
+    "header": "Identifier for retrieval via secret-get <NAME>.",
+    "description": "Optional human-readable context — shown in list / future audits.",
+    "persist": "No automatic expiry. Default is 24h TTL.",
+    "mirror": "Also write an encrypted copy to your remote backend (for server-side reuse).",
+}
+
+
+class _Tooltip:
+    """Dependency-free hover tooltip for tk/ttk AND CustomTkinter widgets.
+
+    Shows a small borderless ``tk.Toplevel`` after ``delay_ms`` once the
+    pointer enters the widget, and hides it on ``<Leave>`` / any button press.
+    Works for CustomTkinter widgets too — they expose ``.bind`` / ``.winfo_*``
+    just like plain tk widgets, so no CTk-specific API is needed (and no
+    third-party ``CTkToolTip`` package).
+
+    Tinted with the ``BRAND`` palette so it reads consistently in dark mode.
+    Fully defensive: every Tk interaction is wrapped — a tooltip must never be
+    able to crash the dialog it decorates.
+    """
+
+    def __init__(self, widget, text: str, delay_ms: int = 500) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._after_id = None
+        self._tip = None
+        try:
+            widget.bind("<Enter>", self._schedule, add="+")
+            widget.bind("<Leave>", self._hide, add="+")
+            widget.bind("<ButtonPress>", self._hide, add="+")
+        except Exception:  # noqa: BLE001 — never let binding failures break the dialog
+            pass
+
+    def _schedule(self, _event=None) -> None:
+        self._cancel()
+        try:
+            self._after_id = self.widget.after(self.delay_ms, self._show)
+        except Exception:  # noqa: BLE001
+            self._after_id = None
+
+    def _cancel(self) -> None:
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:  # noqa: BLE001
+                pass
+            self._after_id = None
+
+    def _show(self) -> None:
+        if self._tip is not None or not self.text:
+            return
+        try:
+            import tkinter as tk
+
+            # Position just below-right of the pointer.
+            x = self.widget.winfo_pointerx() + 14
+            y = self.widget.winfo_pointery() + 18
+
+            tip = tk.Toplevel(self.widget)
+            tip.wm_overrideredirect(True)
+            try:
+                tip.attributes("-topmost", True)
+            except Exception:  # noqa: BLE001
+                pass
+            tip.configure(bg=BRAND["line"])  # acts as a 1px border
+            label = tk.Label(
+                tip,
+                text=self.text,
+                justify="left",
+                background=BRAND["surface_alt"],
+                foreground=BRAND["text"],
+                font=_font("normal", 9),
+                padx=8,
+                pady=5,
+                wraplength=300,
+                bd=0,
+            )
+            label.pack(padx=1, pady=1)
+            tip.wm_geometry(f"+{x}+{y}")
+            self._tip = tip
+        except Exception:  # noqa: BLE001
+            self._tip = None
+
+    def _hide(self, _event=None) -> None:
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            self._tip = None
+
+
+def _attach_tooltip(widget, text: str, delay_ms: int = 500):
+    """Attach a hover tooltip to ``widget``. Returns the ``_Tooltip`` (or None).
+
+    Convenience wrapper used by both dialog builders. Never raises — if anything
+    goes wrong the dialog simply has no tooltip on that widget.
+    """
+    if not widget or not text:
+        return None
+    try:
+        return _Tooltip(widget, text, delay_ms=delay_ms)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _safe_destroy(window) -> None:
     """Tear a Tk/CustomTkinter window down without the noisy
     ``invalid command name "..._check_dpi_scaling"`` Tcl errors.
@@ -434,15 +547,22 @@ def _show_dialog_ttk(
     outer = ttk.Frame(root, padding=18)
     outer.pack(fill="both", expand=True)
 
-    ttk.Label(outer, text=f"Enter credential: {key_name}", style="Header.TLabel").pack(anchor="w")
+    header_lbl = ttk.Label(outer, text=f"Enter credential: {key_name}", style="Header.TLabel")
+    header_lbl.pack(anchor="w")
+    # The header is the only place the key name appears in the dialog.
+    _attach_tooltip(header_lbl, TOOLTIP_TEXTS["header"])
 
-    ttk.Label(
+    desc_lbl = ttk.Label(
         outer,
         text=description
         or "Paste the value (Ctrl+V on Win/Linux, ⌘V on macOS). " "Stored locally on this machine.",
         style="Hint.TLabel",
         wraplength=520,
-    ).pack(anchor="w", pady=(4, 10))
+    )
+    desc_lbl.pack(anchor="w", pady=(4, 10))
+    # When a CLI --desc was supplied, this label *is* the description; tooltip it.
+    if description:
+        _attach_tooltip(desc_lbl, TOOLTIP_TEXTS["description"])
 
     value_var = tk.StringVar()
     show_var = tk.BooleanVar(value=False)
@@ -457,6 +577,7 @@ def _show_dialog_ttk(
     entry = ttk.Entry(entry_row, textvariable=value_var, show="*")
     entry.pack(side="left", fill="x", expand=True)
     entry.focus_set()
+    _attach_tooltip(entry, TOOLTIP_TEXTS["value"])
 
     def paste_clipboard():
         try:
@@ -498,11 +619,13 @@ def _show_dialog_ttk(
 
     if show_mirror:
         ttk.Separator(outer).pack(fill="x", pady=10)
-        ttk.Checkbutton(
+        mirror_cb = ttk.Checkbutton(
             outer,
             text="Also mirror to remote backend",
             variable=vault_var,
-        ).pack(anchor="w")
+        )
+        mirror_cb.pack(anchor="w")
+        _attach_tooltip(mirror_cb, TOOLTIP_TEXTS["mirror"])
         ttk.Label(
             outer,
             text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
@@ -512,11 +635,13 @@ def _show_dialog_ttk(
     else:
         ttk.Separator(outer).pack(fill="x", pady=10)
 
-    ttk.Checkbutton(
+    persist_cb = ttk.Checkbutton(
         outer,
         text="Store permanently (no local TTL)",
         variable=persist_var,
-    ).pack(anchor="w", pady=(6, 4))
+    )
+    persist_cb.pack(anchor="w", pady=(6, 4))
+    _attach_tooltip(persist_cb, TOOLTIP_TEXTS["persist"])
 
     ttk.Label(outer, text=f"Backend: {backend_label}", style="Backend.TLabel").pack(
         anchor="w", pady=(12, 0)
@@ -607,15 +732,18 @@ def _show_dialog_ctk(
     outer = ctk.CTkFrame(root, fg_color="transparent")
     outer.pack(fill="both", expand=True, padx=26, pady=22)
 
-    ctk.CTkLabel(
+    header_lbl = ctk.CTkLabel(
         outer,
         text=f"Enter credential: {key_name}",
         font=f_header,
         text_color=BRAND["text"],
         anchor="w",
-    ).pack(anchor="w", fill="x")
+    )
+    header_lbl.pack(anchor="w", fill="x")
+    # The header is the only place the key name appears in the dialog.
+    _attach_tooltip(header_lbl, TOOLTIP_TEXTS["header"])
 
-    ctk.CTkLabel(
+    desc_lbl = ctk.CTkLabel(
         outer,
         text=(
             description
@@ -627,7 +755,11 @@ def _show_dialog_ctk(
         anchor="w",
         justify="left",
         wraplength=520,
-    ).pack(anchor="w", fill="x", pady=(4, 14))
+    )
+    desc_lbl.pack(anchor="w", fill="x", pady=(4, 14))
+    # When a CLI --desc was supplied, this label *is* the description; tooltip it.
+    if description:
+        _attach_tooltip(desc_lbl, TOOLTIP_TEXTS["description"])
 
     value_var = ctk.StringVar()
     show_var = ctk.BooleanVar(value=False)
@@ -651,6 +783,7 @@ def _show_dialog_ctk(
     )
     entry.pack(side="left", fill="x", expand=True)
     entry.focus_set()
+    _attach_tooltip(entry, TOOLTIP_TEXTS["value"])
 
     def paste_clipboard():
         try:
@@ -708,7 +841,7 @@ def _show_dialog_ctk(
 
     if show_mirror:
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
-        ctk.CTkCheckBox(
+        mirror_cb = ctk.CTkCheckBox(
             outer,
             text="Also mirror to remote backend",
             variable=vault_var,
@@ -717,7 +850,9 @@ def _show_dialog_ctk(
             fg_color=BRAND["violet"],
             hover_color=BRAND["violet_light"],
             border_color=BRAND["line"],
-        ).pack(anchor="w")
+        )
+        mirror_cb.pack(anchor="w")
+        _attach_tooltip(mirror_cb, TOOLTIP_TEXTS["mirror"])
         ctk.CTkLabel(
             outer,
             text="Detected: " + ", ".join(detected_vaults) + ". See ROADMAP.md.",
@@ -730,7 +865,7 @@ def _show_dialog_ctk(
     else:
         ctk.CTkFrame(outer, height=1, fg_color=BRAND["line"]).pack(fill="x", pady=12)
 
-    ctk.CTkCheckBox(
+    persist_cb = ctk.CTkCheckBox(
         outer,
         text="Store permanently (no local TTL)",
         variable=persist_var,
@@ -739,7 +874,9 @@ def _show_dialog_ctk(
         fg_color=BRAND["violet"],
         hover_color=BRAND["violet_light"],
         border_color=BRAND["line"],
-    ).pack(anchor="w", pady=(6, 4))
+    )
+    persist_cb.pack(anchor="w", pady=(6, 4))
+    _attach_tooltip(persist_cb, TOOLTIP_TEXTS["persist"])
 
     ctk.CTkLabel(
         outer,
