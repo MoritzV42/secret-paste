@@ -80,7 +80,7 @@ def test_main_passes_multiline_to_dialog(isolated_dirs, fake_backend, monkeypatc
 
     seen = {}
 
-    def fake_dialog(name, desc, default_persist, backend_label, multiline=False):
+    def fake_dialog(name, desc, default_persist, backend_label, multiline=False, lang=None):
         seen["multiline"] = multiline
         # Return a multi-line dotenv value via the canonical contract.
         return (True, "A=1\nB=2", False, True)
@@ -92,3 +92,33 @@ def test_main_passes_multiline_to_dialog(isolated_dirs, fake_backend, monkeypatc
     # The whole multi-line block round-trips through storage.
     value, _meta = core.read_credential("ENVBLOCK")
     assert value == "A=1\nB=2"
+
+
+# --- --lang flag + locale resolution -------------------------------------
+
+
+def test_parse_args_lang_flag():
+    args = cli.parse_args(["MY_KEY", "--lang=de"])
+    assert args.lang == "de"
+    args = cli.parse_args(["MY_KEY"])
+    assert args.lang is None
+
+
+def test_resolve_lang_cli_flag_wins(isolated_dirs):
+    core.set_locale("en")  # persisted EN
+    assert cli.resolve_lang("de") == "de"  # --lang overrides for this run
+
+
+def test_resolve_lang_uses_persisted_when_no_flag(isolated_dirs):
+    core.set_locale("de")
+    assert cli.resolve_lang(None) == "de"
+
+
+def test_resolve_lang_falls_back_to_system(isolated_dirs, monkeypatch):
+    # No --lang and no persisted locale → system default.
+    import secret_paste_i18n as i18n
+
+    monkeypatch.setattr(i18n, "system_default_lang", lambda: "de")
+    assert cli.resolve_lang(None) == "de"
+    monkeypatch.setattr(i18n, "system_default_lang", lambda: "en")
+    assert cli.resolve_lang(None) == "en"

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **i18n: German/English dialog (#3).** The paste dialog now has a compact
+  `EN / DE` toggle (top-right) that re-translates every string **live**, without
+  a restart. English stays the default for OSS adoption; a German system locale
+  (`de_*`) opens in German on first run. The choice is persisted to
+  `config.json` (`locale` key) and reused across sessions.
+- CLI flag `--lang=de|en` to force the dialog language for a single run
+  (overrides the persisted/auto locale).
+- Translations as JSON files in `locales/` (`en.json`, `de.json`) with a loader
+  (`secret_paste_i18n`) that falls back to English **per key** for any missing
+  string — adding a language is a pure data change (drop `locales/<code>.json`).
+  See the README "Language (i18n)" section.
 - Hover **tooltips** on the paste-dialog options (issue #2). A short, ~500ms
   delayed hint explains each control — most importantly that "Store
   permanently" overrides the default 24h TTL. Tooltips also cover the value
@@ -16,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkbox. Implemented with a dependency-free `tk.Toplevel` helper that works
   in **both** the CustomTkinter UI and the stdlib `ttk` fallback (no new
   third-party dependency), brand-tinted for dark mode, and fully defensive so a
-  tooltip can never crash the dialog.
+  tooltip can never crash the dialog. (Tooltips are English-only for now.)
 - `secret-paste --multiline KEY` — store a whole multi-line value (a `.env`
   block of `KEY=VALUE` lines, a recovery-code block, …) under one name. The
   dialog shows a ~10-row text box instead of the masked single-line field;
@@ -29,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (same security property as the single-line case). Single-line values keep
   100% identical behavior. Also fixes the POSIX path, which previously read only
   the first line of a multi-line value. (Issue #4)
+
+### Changed
+
+- **CLI / log output stays English** even in German UI mode (technical logs are
+  easier to grep / paste into issues). Only the GUI is localized.
 
 ### Documentation
 

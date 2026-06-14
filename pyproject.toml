@@ -73,6 +73,7 @@ secret-paste-install-skill = "secret_paste_install_skill:main"
 py-modules = [
     "secret_paste_core",
     "secret_paste_cli",
+    "secret_paste_i18n",
     "secret_get_cli",
     "secret_list_cli",
     "secret_revoke_cli",
@@ -82,6 +83,13 @@ packages = ["secret_paste_skill"]
 
 [tool.setuptools.package-data]
 secret_paste_skill = ["*.md"]
+
+# GUI translation files (issue #3). The flat py-module layout has no package to
+# attach package-data to, so the locales ship as data-files installed alongside
+# the modules. The i18n loader also carries an embedded English fallback, so the
+# tool still renders complete English labels even if these files are absent.
+[tool.setuptools.data-files]
+"locales" = ["locales/en.json", "locales/de.json"]
 
 [tool.ruff]
 line-length = 100

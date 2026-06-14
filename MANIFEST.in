@@ -1,0 +1,2 @@
+include locales/*.json
+include README.md CHANGELOG.md LICENSE ROADMAP.md
