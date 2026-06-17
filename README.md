@@ -13,13 +13,12 @@ it by name from a **5-minute-TTL temp file**. The transcript only ever
 contains a file path — never the value.
 
 ```text
-+----------------- Agent says -------------------------+
-| "I need your Brevo API key. Run                      |
-|   secret-paste BREVO_KEY                             |
-|  and paste the value into the dialog that pops up."  |
++----------------- Agent runs (for you) ---------------+
+| $ secret-paste BREVO_KEY    <- agent runs it itself, |
+|   "I need your Brevo API key — dialog's open."       |
 +------------------------------------------------------+
                          |
-                         v   (you run it locally)
+                         v   (a dialog pops up on your screen)
 +----------------- secret-paste BREVO_KEY -------------+
 | Enter credential: BREVO_KEY                          |
 | [ ******************************************** ]    |
@@ -29,7 +28,7 @@ contains a file path — never the value.
 |                                  [ Cancel ]  [ OK ]  |
 +------------------------------------------------------+
                          |
-                         v   (agent retrieves it)
+                         v   (you click OK -> control returns to the agent)
   $ secret-get BREVO_KEY
   OK: BREVO_KEY available at C:\Temp\secret-paste-tmp\BREVO_KEY.val
       (5min TTL, source=Windows DPAPI)
@@ -94,11 +93,18 @@ wires shell functions into your `$PROFILE`:
 
 ## Usage
 
-1. **Agent** prompts: _"I need your Brevo API key. Run `secret-paste
-   BREVO_KEY` and paste it into the dialog."_
-2. **You** run it. A GUI dialog opens. Paste the value. Click **OK**.
+1. **Agent** runs `secret-paste BREVO_KEY` itself (a blocking command) and
+   tells you: _"I need your Brevo API key — I've opened the dialog."_
+2. **You** paste the value into the dialog that popped up and click **OK**.
+   Closing the dialog hands control straight back to the agent — you don't
+   type "done", you don't confirm anything.
 3. **Agent** calls `secret-get BREVO_KEY`. Receives a path to a
    5-minute-TTL temp file. **The value never appears in chat.**
+
+> The agent runs `secret-paste` for you whenever it has a terminal on your
+> machine (Claude Code, Cursor, any CLI agent). Your only job is to fill in
+> the dialog and click OK. (If the agent has no terminal access, it'll ask
+> you to run the command yourself instead.)
 
 ### Two TTLs
 
@@ -227,11 +233,14 @@ For agents without a skill loader, drop this into your agent's system prompt /
 `CLAUDE.md` / Cursor rules / custom-instructions file:
 
 > When you need a credential that I haven't given you yet, do **not** ask me
-> to paste it into the chat. Instead, ask me to run
-> `secret-paste <KEY_NAME>` in my terminal, wait for me to confirm, then
-> call `secret-get <KEY_NAME>` yourself. That prints a file path to a
-> 5-minute-TTL temp file — read the value from that file (not from this
-> chat) and use it directly. Never echo the value back to me.
+> to paste it into the chat. Instead, run `secret-paste <KEY_NAME>` yourself
+> as a blocking foreground command in my terminal (never backgrounded /
+> detached — that breaks it). A dialog opens on my screen; I paste the value
+> and close it, which makes the command return to you — I do not type "done".
+> Then call `secret-get <KEY_NAME>` yourself: it prints a file path to a
+> 5-minute-TTL temp file — read the value from that file (not from this chat)
+> and use it directly. Never echo the value back to me. (Only if you have no
+> terminal on my machine, ask me to run `secret-paste <KEY_NAME>` myself.)
 
 The first line of `secret-get`'s stdout has a stable contract:
 
@@ -411,7 +420,7 @@ Open an issue with the file attached.
 - **[ingpad](https://github.com/MoritzV42/ingpad)** — A patient AI tutor on a canvas: it reads your handwriting, checks every step of a technical exercise, and explains what is missing — solve, don’t copy.
 - **[agent-browser](https://github.com/MoritzV42/agent-browser)** — Let your AI coding agent drive your real Chrome — click, fill, screenshot, read the console & network — from any MCP-capable agent.
 
-All free & open source, built in public → **[moritzvoigt.infinityspace42.de](https://moritzvoigt.infinityspace42.de)**
+All free & open source, built in public → **[opensource.infinityspace42.de](https://opensource.infinityspace42.de)**
 <!-- PORTFOLIO-LINKS:END -->
 
 ## License

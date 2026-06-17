@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent-driven paste flow — the agent runs `secret-paste` itself, no more
+  "tell me when done".** The bundled Claude-Code skill and the README now
+  instruct the agent to run `secret-paste KEY_NAME` **itself** as a blocking
+  foreground command whenever it has a terminal on the user's machine. The
+  dialog opens, the user fills it in and clicks OK, and **closing the dialog
+  returns control to the agent automatically** — the user no longer has to
+  type "done" or confirm in chat. Asking the user to run the command is now
+  an explicit fallback only for agents without terminal access. No tool code
+  changed: `secret-paste` already blocks on its dialog; this corrects the
+  documented workflow that previously told agents to pause and wait for a
+  chat confirmation.
+
 ### Added
 
 - **i18n: German/English dialog (#3).** The paste dialog now has a compact

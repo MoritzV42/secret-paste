@@ -1,6 +1,6 @@
 ---
 name: secret-paste
-description: Request and use credentials (API keys, tokens, passwords) without ever putting their values into the chat transcript. AUTO-TRIGGER whenever you need a credential that is not already available via a vault you can read, environment variable, or repo configuration. Instead of asking the user to paste a key into chat, ask them to run `secret-paste KEY_NAME`, then retrieve the value via `secret-get KEY_NAME` and read it from the printed temp-file path. Never echo, log, or pass the value as a CLI argument.
+description: Request and use credentials (API keys, tokens, passwords) without ever putting their values into the chat transcript. AUTO-TRIGGER whenever you need a credential that is not already available via a vault you can read, environment variable, or repo configuration. Instead of asking the user to paste a key into chat, run `secret-paste KEY_NAME` YOURSELF in the user's terminal as a blocking foreground command — the GUI dialog opens on their machine, they enter the value and click OK/close, which returns control to you automatically (no "done" message needed). Then retrieve the value via `secret-get KEY_NAME` and read it from the printed temp-file path. Never echo, log, or pass the value as a CLI argument.
 user_invocable: true
 ---
 
@@ -14,8 +14,16 @@ credential without the value ever entering this chat transcript.
 **Whenever you need a credential that is not already accessible** (no env
 var, no entry in a project vault, no `.env` file you can read, no
 already-authenticated CLI like `gh auth`), use the secret-paste workflow
-**by default**. Do not say *"please paste your X key here"* — say what's in
-**Workflow** below.
+**by default**. Do not say *"please paste your X key here"*.
+
+**You run the command — not the user.** If you have shell access to the
+user's machine (Claude Code, Cursor with a terminal, any CLI agent), you
+**run `secret-paste KEY_NAME` yourself** as a normal blocking foreground
+command. The dialog opens on the user's screen; they type the value and
+click OK (or close it). Closing the dialog ends the blocking command and
+hands control straight back to you — **the user never has to type "done"**.
+Then you immediately call `secret-get`. Only when you genuinely have no
+terminal on the user's machine do you fall back to asking them to run it.
 
 Common triggers:
 - Calling an external API (Brevo, Stripe, OpenAI, Anthropic, Hetzner, etc.)
@@ -25,20 +33,37 @@ Common triggers:
 
 ## Workflow
 
-1. **Ask the user to run the paste command.** Pick a clear UPPER_SNAKE_CASE
-   name for the credential.
+1. **Run the paste command yourself.** Pick a clear UPPER_SNAKE_CASE name and
+   execute it as a **blocking foreground command** in the user's shell — e.g.
+   `secret-paste BREVO_KEY`. Tell the user in one short line what you're
+   asking for and that the dialog just opened:
 
-   > "I need your Brevo API key to call the campaigns endpoint. Please run
-   > `secret-paste BREVO_KEY` in your terminal, paste the value into the
-   > dialog that appears, and click OK. Tell me when it's done."
+   > "I need your Brevo API key for the campaigns endpoint — I've opened the
+   > secret-paste dialog. Paste the value and click OK."
 
-   Useful flags to suggest:
+   **Critical — how to invoke it:**
+   - Run it **in the foreground / blocking**. The command does not return
+     until the user closes the dialog. That return *is* your signal to
+     continue — **do not** ask the user to type "done", and **do not** make
+     them confirm.
+   - **Never** launch it detached/backgrounded (no `&`, no `Start-Process`,
+     no `nohup`, no `run_in_background`). A detached launch returns
+     immediately and breaks the auto-resume — that's the one thing to avoid.
+   - Set a **generous timeout** (e.g. 5–10 min) so the user has time to find
+     and paste the value before your tool call times out.
+
+   Useful flags to add:
    - `--ttl=24` — keep in the persistent store for 24 hours (default)
    - `--persist` — keep permanently (use for keys you'll re-use across sessions)
    - `--desc="Brevo transactional API key"` — shows in the dialog as context
 
-2. **Wait** for the user to confirm. Do not poll, do not call `secret-get`
-   before they say it's done.
+2. **The command returns when the user closes the dialog.** Check its output:
+   `OK: <NAME> stored locally (...)` means success → continue. `Cancelled.`
+   (exit 1) means the user dismissed it → ask whether to retry. No polling,
+   no waiting for a chat message.
+
+   *(Fallback only if you have no terminal on the user's machine: ask them to
+   run `secret-paste BREVO_KEY` themselves, then continue once they confirm.)*
 
 3. **Retrieve via `secret-get`.** Stdout will be one line:
 
